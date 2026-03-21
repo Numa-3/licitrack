@@ -49,13 +49,66 @@ const CONTRACT_TYPES = [
   { value: 'mixed', label: 'Mixto', icon: '📦', description: 'Combinación de tipos' },
 ]
 
-// Column detection patterns
+// Column detection patterns — ordered from most specific to least specific
 const COL_PATTERNS: Record<keyof ColumnMapping, RegExp[]> = {
-  item_number: [/^[#ìíiî]tem$/i, /^#$/i, /^n[uúü]mero$/i, /^num$/i, /^item$/i, /^no\.?$/i],
-  description: [/descrip/i, /detalle/i, /especificaci/i, /concepto/i, /bien/i, /servicio/i, /objeto/i],
-  unit: [/unidad/i, /medida/i, /^u\.?m\.?$/i, /^und$/i],
-  quantity: [/cantidad/i, /cant/i, /^qty$/i],
-  sale_price: [/valor/i, /precio/i, /unitario/i, /v\.\s*unit/i, /p\.\s*unit/i],
+  item_number: [
+    /^[#nº°]?\s*[ìíiî]tem\s*[#nº°]?$/i, // "Item", "# Item", "Item #"
+    /^[#nº°]$/i,                           // "#"
+    /^n[uúü]m(ero)?\.?$/i,                 // "Num", "Número"
+    /^(item|ítem|ìtem)$/i,                 // exacto
+    /^no\.?\s*$/i,                          // "No", "No."
+    /^ord(en)?\.?$/i,                       // "Orden", "Ord"
+    /^pos(ici[oó]n)?\.?$/i,                 // "Posición", "Pos"
+    /^it(em)?\.?$/i,                        // "It", "Item"
+  ],
+  description: [
+    /descrip/i,       // "Descripción", "Description"
+    /detalle/i,       // "Detalle"
+    /especificaci/i,  // "Especificación"
+    /concepto/i,      // "Concepto"
+    /bien(es)?/i,     // "Bien", "Bienes"
+    /servicio/i,      // "Servicio"
+    /objeto/i,        // "Objeto"
+    /producto/i,      // "Producto"
+    /denominaci/i,    // "Denominación"
+    /nombre/i,        // "Nombre"
+    /articulo/i,      // "Artículo"
+    /elemento/i,      // "Elemento"
+    /material/i,      // "Material"
+    /referencia/i,    // "Referencia"
+  ],
+  unit: [
+    /unidad.*medida/i,  // "Unidad de Medida" — más específico primero
+    /medida.*unidad/i,
+    /unidad/i,
+    /medida/i,
+    /^u\.?\s*m\.?$/i,   // "UM", "U.M."
+    /^und\.?$/i,        // "Und"
+    /^unid\.?$/i,       // "Unid"
+    /^u\.?$/i,          // "U"
+  ],
+  quantity: [
+    /cantidad/i,    // "Cantidad"
+    /cant\.?/i,     // "Cant", "Cant."
+    /^qty\.?$/i,    // "Qty"
+    /^q$/i,         // "Q"
+    /volumen/i,     // "Volumen"
+    /^ctd\.?$/i,    // "Ctd"
+  ],
+  sale_price: [
+    /valor.*unit/i,   // "Valor Unitario" — más específico primero
+    /precio.*unit/i,  // "Precio Unitario"
+    /unit.*valor/i,
+    /unit.*precio/i,
+    /vr\.?\s*unit/i,  // "Vr Unit", "Vr. Unit"
+    /v\.?\s*unit/i,   // "V. Unit"
+    /p\.?\s*unit/i,   // "P. Unit"
+    /unitario/i,      // cualquier cosa con "unitario"
+    /valor/i,         // "Valor" — menos específico al final
+    /precio/i,        // "Precio"
+    /costo/i,         // "Costo"
+    /tarifa/i,        // "Tarifa"
+  ],
 }
 
 function detectColumns(headers: string[]): ColumnMapping {
@@ -203,8 +256,17 @@ export default function NewContractForm({ organizations, profiles, categories, c
       return
     }
 
-    const headers = (json[0] as unknown[]).map((h) => String(h ?? ''))
-    const rows = json.slice(1).filter((row) =>
+    // Auto-detect header row: find first row with at least 2 non-empty cells that match any pattern
+    const allPatterns = Object.values(COL_PATTERNS).flat()
+    let headerRowIndex = 0
+    for (let r = 0; r < Math.min(json.length, 10); r++) {
+      const row = (json[r] as unknown[]).map((h) => String(h ?? '').trim())
+      const matches = row.filter((h) => allPatterns.some((p) => p.test(h)))
+      if (matches.length >= 1) { headerRowIndex = r; break }
+    }
+
+    const headers = (json[headerRowIndex] as unknown[]).map((h) => String(h ?? ''))
+    const rows = json.slice(headerRowIndex + 1).filter((row) =>
       (row as unknown[]).some((cell) => cell !== null && cell !== undefined && String(cell).trim() !== '')
     ) as unknown[][]
 
