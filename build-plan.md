@@ -198,7 +198,7 @@ Lee el spec.md y revisá el código existente. Vamos a construir el módulo de e
    - Botón "Completar contrato" (valida que todos los ítems estén en estado final)
    - Lista de ítems vacía por ahora (la llenamos en el siguiente chat)
 
-Usá componentes reutilizables en components/features/. Diseño desktop-first con Tailwind. Interfaz en español.
+Usá componentes reutilizables en components/features/. Diseño desktop-first con Tailwind. Interfaz en despañol.
 ```
 
 ### Después del chat
