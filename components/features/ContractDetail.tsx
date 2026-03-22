@@ -222,15 +222,23 @@ export default function ContractDetail({
   // Margin summary
   const marginSummary = useMemo(() => {
     let totalSale = 0, totalCost = 0, lowMarginCount = 0, negativeMarginCount = 0
+    let withSupplier = 0
+    const itemMargins: { id: string; short_name: string; margin: number }[] = []
     for (const item of items) {
       if (item.sale_price) totalSale += Number(item.sale_price) * Number(item.quantity)
       if (item.supplier_cost) totalCost += Number(item.supplier_cost) * Number(item.quantity)
+      if (item.supplier_id) withSupplier++
       const m = marginPct(item.sale_price, item.supplier_cost)
-      if (m != null && m < 0) negativeMarginCount++
-      else if (m != null && m < 15) lowMarginCount++
+      if (m != null) {
+        itemMargins.push({ id: item.id, short_name: item.short_name, margin: m })
+        if (m < 0) negativeMarginCount++
+        else if (m < 15) lowMarginCount++
+      }
     }
     const totalMargin = totalSale > 0 ? ((totalSale - totalCost) / totalSale) * 100 : null
-    return { totalSale, totalCost, totalMargin, lowMarginCount, negativeMarginCount }
+    const supplierPct = items.length > 0 ? Math.round((withSupplier / items.length) * 100) : 0
+    const worstMarginItems = [...itemMargins].sort((a, b) => a.margin - b.margin).slice(0, 5)
+    return { totalSale, totalCost, totalMargin, lowMarginCount, negativeMarginCount, supplierPct, worstMarginItems }
   }, [items])
 
   // Recent suppliers in this contract (for chips)
@@ -602,35 +610,57 @@ export default function ContractDetail({
 
         {/* Margin summary */}
         {items.length > 0 && (marginSummary.totalSale > 0 || marginSummary.totalCost > 0) && (
-          <div className="grid grid-cols-4 gap-4 mb-6">
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Ingreso total</p>
-              <p className="text-lg font-semibold text-gray-900">{formatCurrency(marginSummary.totalSale)}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Costo total</p>
-              <p className="text-lg font-semibold text-gray-900">{formatCurrency(marginSummary.totalCost)}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Margen</p>
-              <p className={`text-lg font-semibold ${marginColor(marginSummary.totalMargin)}`}>
-                {marginSummary.totalMargin != null ? `${marginSummary.totalMargin.toFixed(1)}%` : '—'}
-              </p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Alertas</p>
-              <div className="flex gap-2">
-                {marginSummary.negativeMarginCount > 0 && (
-                  <span className="text-sm text-red-600 font-medium">{marginSummary.negativeMarginCount} negativo{marginSummary.negativeMarginCount > 1 ? 's' : ''}</span>
-                )}
-                {marginSummary.lowMarginCount > 0 && (
-                  <span className="text-sm text-orange-500 font-medium">{marginSummary.lowMarginCount} bajo{marginSummary.lowMarginCount > 1 ? 's' : ''}</span>
-                )}
-                {marginSummary.negativeMarginCount === 0 && marginSummary.lowMarginCount === 0 && (
-                  <span className="text-sm text-green-600">Todo bien</span>
-                )}
+          <div className="space-y-4 mb-6">
+            <div className="grid grid-cols-5 gap-4">
+              <div className="bg-white border border-gray-200 rounded-xl p-4">
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Ingreso total</p>
+                <p className="text-lg font-semibold text-gray-900">{formatCurrency(marginSummary.totalSale)}</p>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-xl p-4">
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Costo total</p>
+                <p className="text-lg font-semibold text-gray-900">{formatCurrency(marginSummary.totalCost)}</p>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-xl p-4">
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Margen</p>
+                <p className={`text-lg font-semibold ${marginColor(marginSummary.totalMargin)}`}>
+                  {marginSummary.totalMargin != null ? `${marginSummary.totalMargin.toFixed(1)}%` : '—'}
+                </p>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-xl p-4">
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Con proveedor</p>
+                <p className="text-lg font-semibold text-gray-900">{marginSummary.supplierPct}%</p>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-xl p-4">
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Alertas</p>
+                <div className="flex gap-2">
+                  {marginSummary.negativeMarginCount > 0 && (
+                    <span className="text-sm text-red-600 font-medium">{marginSummary.negativeMarginCount} negativo{marginSummary.negativeMarginCount > 1 ? 's' : ''}</span>
+                  )}
+                  {marginSummary.lowMarginCount > 0 && (
+                    <span className="text-sm text-orange-500 font-medium">{marginSummary.lowMarginCount} bajo{marginSummary.lowMarginCount > 1 ? 's' : ''}</span>
+                  )}
+                  {marginSummary.negativeMarginCount === 0 && marginSummary.lowMarginCount === 0 && (
+                    <span className="text-sm text-green-600">Todo bien</span>
+                  )}
+                </div>
               </div>
             </div>
+            {/* Worst margin items */}
+            {marginSummary.worstMarginItems.length > 0 && marginSummary.worstMarginItems[0].margin < 15 && (
+              <div className="bg-white border border-gray-200 rounded-xl p-4">
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Ítems con peor margen</p>
+                <div className="flex flex-wrap gap-2">
+                  {marginSummary.worstMarginItems.map(wi => (
+                    <span key={wi.id} className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border ${
+                      wi.margin < 0 ? 'bg-red-50 border-red-200 text-red-700' : 'bg-amber-50 border-amber-200 text-amber-700'
+                    }`}>
+                      {wi.short_name}
+                      <span className="font-semibold">{wi.margin.toFixed(1)}%</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
