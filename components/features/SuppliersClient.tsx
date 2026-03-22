@@ -178,11 +178,22 @@ export default function SuppliersClient({ suppliers: initialSuppliers, userRole,
       {/* Table */}
       {filtered.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl px-6 py-12 text-center">
-          <p className="text-gray-400 text-lg">No hay proveedores{search || filterType || filterCity ? ' con esos filtros' : ''}</p>
+          {search || filterType || filterCity || filterVerified || filterPendingDocs ? (
+            <p className="text-gray-400 text-lg">No hay proveedores con esos filtros</p>
+          ) : (
+            <>
+              <p className="text-gray-500 text-lg mb-1">No hay proveedores registrados.</p>
+              <p className="text-gray-400 text-sm mb-4">Agregá tu primer proveedor para empezar.</p>
+              <button onClick={() => setShowNew(true)}
+                className="inline-block bg-gray-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors">
+                + Agregar primer proveedor
+              </button>
+            </>
+          )}
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-x-auto">
+          <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="text-left px-5 py-3 font-medium text-gray-600">Nombre</th>

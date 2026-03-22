@@ -248,8 +248,8 @@ export default function InvoicesClient({ invoices: initialInvoices, contracts, s
           <p className="text-gray-400 text-sm mt-1">Usá el botón &quot;Subir factura&quot; para cargar una.</p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-x-auto">
+          <table className="w-full text-sm min-w-[700px]">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">N° Factura</th>

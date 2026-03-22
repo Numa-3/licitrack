@@ -223,8 +223,29 @@ export default function DashboardClient({ contracts, items, shipments, invoices,
         )}
       </div>
 
+      {/* ── Empty state for no contracts ─────────────────────── */}
+      {contracts.length === 0 && (
+        <div className="bg-white border border-gray-200 rounded-xl px-6 py-16 text-center mb-6">
+          {userRole === 'jefe' ? (
+            <>
+              <p className="text-gray-500 text-lg mb-1">No tenés contratos aún.</p>
+              <p className="text-gray-400 text-sm mb-4">Creá tu primer contrato para empezar a gestionar licitaciones.</p>
+              <Link href="/contracts/new"
+                className="inline-block bg-gray-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors">
+                + Crear primer contrato
+              </Link>
+            </>
+          ) : (
+            <>
+              <p className="text-gray-500 text-lg mb-1">No tenés ítems asignados aún.</p>
+              <p className="text-gray-400 text-sm">Brandon te asignará tareas pronto.</p>
+            </>
+          )}
+        </div>
+      )}
+
       {/* ── Metrics cards ─────────────────────────────────────── */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      {contracts.length > 0 && <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Contratos activos</p>
           <p className="text-2xl font-bold text-gray-900">{activeContracts}</p>
@@ -241,7 +262,7 @@ export default function DashboardClient({ contracts, items, shipments, invoices,
           <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Facturas total</p>
           <p className="text-2xl font-bold text-gray-900">{formatCurrency(unpaidInvoiceTotal)}</p>
         </div>
-      </div>
+      </div>}
 
       {/* ── Alerts section (jefe only) ────────────────────────── */}
       {userRole === 'jefe' && totalAlerts > 0 && (
@@ -387,8 +408,8 @@ export default function DashboardClient({ contracts, items, shipments, invoices,
           )}
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-x-auto">
+          <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="text-left px-5 py-3 font-medium text-gray-600">Contrato</th>

@@ -193,6 +193,13 @@ export default function ContractDetail({
   const [batchAssign, setBatchAssign] = useState('')
   const [supplierSearch, setSupplierSearch] = useState('')
 
+  // Add item manually
+  const [showAddItem, setShowAddItem] = useState(false)
+  const [newItemForm, setNewItemForm] = useState({
+    short_name: '', description: '', type: 'purchase' as 'purchase' | 'logistics' | 'service',
+    category_id: '', quantity: '1', unit: '', sale_price: '',
+  })
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -377,6 +384,48 @@ export default function ContractDetail({
     setSelected(new Set())
     setLoading(false)
     router.refresh()
+  }
+
+  // Add item manually
+  async function handleAddItem(e: React.FormEvent) {
+    e.preventDefault()
+    if (!newItemForm.short_name.trim()) return
+    setLoading(true)
+    setError(null)
+
+    const nextNumber = items.length > 0 ? Math.max(...items.map(i => i.item_number ?? 0)) + 1 : 1
+
+    const { data, error: err } = await supabase
+      .from('items')
+      .insert({
+        contract_id: contract.id,
+        item_number: nextNumber,
+        short_name: newItemForm.short_name.trim(),
+        description: newItemForm.description.trim(),
+        type: newItemForm.type,
+        category_id: newItemForm.category_id || null,
+        quantity: parseInt(newItemForm.quantity) || 1,
+        unit: newItemForm.unit.trim() || null,
+        sale_price: newItemForm.sale_price ? parseFloat(newItemForm.sale_price) : null,
+        created_by: currentUserId,
+      })
+      .select(`
+        id, item_number, short_name, description, type, quantity, unit, sale_price,
+        supplier_cost, status, payment_status, due_date, contact_phone, notes,
+        category_id, supplier_id, assigned_to, created_by,
+        suppliers ( id, name, whatsapp ),
+        profiles ( id, name )
+      `)
+      .single()
+
+    if (err) { setError(err.message); setLoading(false); return }
+
+    await logActivity('item_updated', data.id, { action: 'created', short_name: newItemForm.short_name.trim() })
+
+    setItems(prev => [...prev, data as unknown as Item])
+    setShowAddItem(false)
+    setNewItemForm({ short_name: '', description: '', type: 'purchase', category_id: '', quantity: '1', unit: '', sale_price: '' })
+    setLoading(false)
   }
 
   // Side panel: update individual item field
@@ -611,7 +660,7 @@ export default function ContractDetail({
         {/* Margin summary */}
         {items.length > 0 && (marginSummary.totalSale > 0 || marginSummary.totalCost > 0) && (
           <div className="space-y-4 mb-6">
-            <div className="grid grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-white border border-gray-200 rounded-xl p-4">
                 <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Ingreso total</p>
                 <p className="text-lg font-semibold text-gray-900">{formatCurrency(marginSummary.totalSale)}</p>
@@ -665,7 +714,7 @@ export default function ContractDetail({
         )}
 
         {/* Info cards */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <div className="bg-white border border-gray-200 rounded-xl p-5">
             <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Información del contrato</h2>
             <dl className="space-y-2 text-sm">
@@ -704,7 +753,7 @@ export default function ContractDetail({
 
         {/* Batch toolbar */}
         {selected.size > 0 && (
-          <div className="mb-4 bg-gray-900 text-white rounded-xl px-5 py-3 flex items-center justify-between">
+          <div className="mb-4 bg-gray-900 text-white rounded-xl px-5 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
             <span className="text-sm font-medium">{selected.size} ítem{selected.size > 1 ? 's' : ''} seleccionado{selected.size > 1 ? 's' : ''}</span>
             <div className="flex items-center gap-2">
               <button onClick={() => { setBatchModal('supplier'); setBatchSupplier(''); setBatchSupplierCost(''); setSupplierSearch('') }}
@@ -736,9 +785,17 @@ export default function ContractDetail({
         {/* Items grouped by supplier */}
         <div className="bg-white border border-gray-200 rounded-xl">
           <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">
-              Ítems <span className="ml-1 text-sm font-normal text-gray-400">({items.length})</span>
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="font-semibold text-gray-900">
+                Ítems <span className="ml-1 text-sm font-normal text-gray-400">({items.length})</span>
+              </h2>
+              {isActive && (
+                <button onClick={() => setShowAddItem(true)}
+                  className="px-3 py-1 bg-gray-900 text-white rounded-lg text-xs font-medium hover:bg-gray-700 transition-colors">
+                  + Agregar ítem
+                </button>
+              )}
+            </div>
             {items.length > 0 && (
               <label className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer">
                 <input type="checkbox" checked={selected.size === items.length && items.length > 0}
@@ -750,8 +807,8 @@ export default function ContractDetail({
 
           {items.length === 0 ? (
             <div className="px-5 py-10 text-center text-gray-400">
-              <p>No hay ítems en este contrato.</p>
-              <p className="text-sm mt-1">Los ítems se agregan al crear el contrato con Excel.</p>
+              <p className="text-lg mb-1">Este contrato no tiene ítems.</p>
+              <p className="text-sm">Subí un Excel o agregá ítems manualmente.</p>
             </div>
           ) : (
             <div>
@@ -766,7 +823,8 @@ export default function ContractDetail({
                   </div>
 
                   {/* Items table */}
-                  <table className="w-full text-sm">
+                  <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[600px]">
                     <tbody className="divide-y divide-gray-100">
                       {group.items.map(item => {
                         const m = marginPct(item.sale_price, item.supplier_cost)
@@ -810,6 +868,7 @@ export default function ContractDetail({
                       })}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1037,6 +1096,69 @@ export default function ContractDetail({
           </form>
         </Modal>
       )}
+
+      {/* Add item modal */}
+      {showAddItem && (
+        <Modal title="Agregar ítem" onClose={() => setShowAddItem(false)}>
+          <form onSubmit={handleAddItem} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre corto *</label>
+              <input type="text" value={newItemForm.short_name} onChange={e => setNewItemForm(f => ({ ...f, short_name: e.target.value }))} required
+                placeholder="Ej: Resma carta" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+              <textarea value={newItemForm.description} onChange={e => setNewItemForm(f => ({ ...f, description: e.target.value }))}
+                rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+                <select value={newItemForm.type} onChange={e => setNewItemForm(f => ({ ...f, type: e.target.value as 'purchase' | 'logistics' | 'service' }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+                  <option value="purchase">Compra</option>
+                  <option value="logistics">Logística</option>
+                  <option value="service">Servicio</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Categoría</label>
+                <select value={newItemForm.category_id} onChange={e => setNewItemForm(f => ({ ...f, category_id: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+                  <option value="">Sin categoría</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cantidad *</label>
+                <input type="number" min="1" value={newItemForm.quantity} onChange={e => setNewItemForm(f => ({ ...f, quantity: e.target.value }))} required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Unidad</label>
+                <input type="text" value={newItemForm.unit} onChange={e => setNewItemForm(f => ({ ...f, unit: e.target.value }))}
+                  placeholder="und" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Precio venta</label>
+                <input type="number" value={newItemForm.sale_price} onChange={e => setNewItemForm(f => ({ ...f, sale_price: e.target.value }))}
+                  placeholder="0" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              </div>
+            </div>
+            {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => setShowAddItem(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">Cancelar</button>
+              <button type="submit" disabled={!newItemForm.short_name.trim() || loading}
+                className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors">
+                {loading ? 'Guardando...' : 'Agregar ítem'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   )
 }
@@ -1072,6 +1194,8 @@ function SidePanel({
   onSaveDetails: (itemId: string, data: Record<string, unknown>) => void
   activityLog: ActivityEntry[]
 }) {
+  const [editShortName, setEditShortName] = useState(item.short_name)
+  const [editQuantity, setEditQuantity] = useState(item.quantity.toString())
   const [editNotes, setEditNotes] = useState(item.notes)
   const [editDescription, setEditDescription] = useState(item.description)
   const [editPhone, setEditPhone] = useState(item.contact_phone || '')
@@ -1083,6 +1207,8 @@ function SidePanel({
   const [lastItemId, setLastItemId] = useState(item.id)
   if (item.id !== lastItemId) {
     setLastItemId(item.id)
+    setEditShortName(item.short_name)
+    setEditQuantity(item.quantity.toString())
     setEditNotes(item.notes)
     setEditDescription(item.description)
     setEditPhone(item.contact_phone || '')
@@ -1095,6 +1221,8 @@ function SidePanel({
 
   function handleSave() {
     const data: Record<string, unknown> = {}
+    if (editShortName !== item.short_name) data.short_name = editShortName
+    if (editQuantity !== item.quantity.toString()) data.quantity = parseInt(editQuantity) || 1
     if (editDescription !== item.description) data.description = editDescription
     if (editNotes !== item.notes) data.notes = editNotes
     if (editPhone !== (item.contact_phone || '')) data.contact_phone = editPhone || null
@@ -1131,6 +1259,24 @@ function SidePanel({
       </div>
 
       <div className="p-5 space-y-5">
+        {/* Editable name & quantity */}
+        <div>
+          <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Nombre corto</label>
+          <input type="text" value={editShortName} onChange={e => { setEditShortName(e.target.value); markDirty() }}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Cantidad</label>
+            <input type="number" min="1" value={editQuantity} onChange={e => { setEditQuantity(e.target.value); markDirty() }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Unidad</label>
+            <p className="px-3 py-2 text-sm text-gray-500">{item.unit || 'und'}</p>
+          </div>
+        </div>
+
         {/* Status buttons */}
         <div>
           <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">Estado logístico</label>
