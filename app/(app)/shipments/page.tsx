@@ -1,8 +1,37 @@
-export default function ShipmentsPage() {
+import { createServerSupabaseClient } from '@/lib/supabase/server'
+import ShipmentsClient from '@/components/features/ShipmentsClient'
+
+export default async function ShipmentsPage() {
+  const supabase = await createServerSupabaseClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  // Obtener envíos con contrato e ítems
+  const { data: shipments } = await supabase
+    .from('shipments')
+    .select(`
+      id, contract_id, method, origin_city, dispatch_date,
+      estimated_arrival, actual_arrival, notes, created_by, created_at,
+      contracts ( name ),
+      shipment_items ( item_id, items ( id, short_name, quantity, unit, status ) )
+    `)
+    .order('dispatch_date', { ascending: false })
+
+  // Obtener contratos para filtro
+  const { data: contracts } = await supabase
+    .from('contracts')
+    .select('id, name')
+    .is('deleted_at', null)
+    .order('name')
+
   return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold text-gray-900">Envíos</h1>
-      <p className="text-gray-500 mt-2">Seguimiento de envíos por avión, barco y terrestre a Leticia.</p>
-    </div>
+    <ShipmentsClient
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      shipments={(shipments || []) as any}
+      contracts={contracts || []}
+      currentUserId={user?.id || ''}
+    />
   )
 }

@@ -181,6 +181,10 @@ export default function ContractDetail({
   const [showEditContract, setShowEditContract] = useState(false)
   const [editForm, setEditForm] = useState({ name: initialContract.name, entity: initialContract.entity, type: initialContract.type })
 
+  // Shipment modal
+  const [showShipmentModal, setShowShipmentModal] = useState(false)
+  const [shipmentForm, setShipmentForm] = useState({ method: 'avion' as 'avion' | 'barco' | 'terrestre', origin_city: '', dispatch_date: '', estimated_arrival: '', notes: '' })
+
   // Batch modals
   const [batchModal, setBatchModal] = useState<'supplier' | 'status' | 'assign' | null>(null)
   const [batchSupplier, setBatchSupplier] = useState('')
@@ -491,6 +495,54 @@ export default function ContractDetail({
     setLoading(false)
   }
 
+  // Purchased items selected for shipment
+  const purchasedSelected = useMemo(() => {
+    return items.filter(i => selected.has(i.id) && i.type === 'purchase' && i.status === 'purchased')
+  }, [items, selected])
+
+  // Create shipment handler
+  async function handleCreateShipment(e: React.FormEvent) {
+    e.preventDefault()
+    if (purchasedSelected.length === 0) return
+    setLoading(true)
+    setError(null)
+
+    const { data: shipment, error: err } = await supabase
+      .from('shipments')
+      .insert({
+        contract_id: contract.id,
+        method: shipmentForm.method,
+        origin_city: shipmentForm.origin_city,
+        dispatch_date: shipmentForm.dispatch_date,
+        estimated_arrival: shipmentForm.estimated_arrival,
+        notes: shipmentForm.notes,
+        created_by: currentUserId,
+      })
+      .select('id')
+      .single()
+
+    if (err || !shipment) { setError(err?.message || 'Error creando envío'); setLoading(false); return }
+
+    // Link items to shipment
+    const itemLinks = purchasedSelected.map(i => ({ shipment_id: shipment.id, item_id: i.id }))
+    await supabase.from('shipment_items').insert(itemLinks)
+
+    // Update items to "shipped"
+    const ids = purchasedSelected.map(i => i.id)
+    await supabase.from('items').update({ status: 'shipped' }).in('id', ids)
+
+    // Log activity
+    for (const id of ids) {
+      await logActivity('status_changed', id, { new_value: 'Enviado', shipment_id: shipment.id })
+    }
+
+    setShowShipmentModal(false)
+    setShipmentForm({ method: 'avion', origin_city: '', dispatch_date: '', estimated_arrival: '', notes: '' })
+    setSelected(new Set())
+    setLoading(false)
+    router.refresh()
+  }
+
   // ── Render ───────────────────────────────────────────
   const contractStatusColor: Record<string, string> = {
     draft: 'bg-gray-100 text-gray-600', active: 'bg-blue-50 text-blue-700',
@@ -637,6 +689,12 @@ export default function ContractDetail({
                 className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">
                 Asignar a
               </button>
+              {purchasedSelected.length > 0 && (
+                <button onClick={() => setShowShipmentModal(true)}
+                  className="px-3 py-1.5 bg-purple-500/80 hover:bg-purple-500 rounded-lg text-sm transition-colors">
+                  🚚 Crear envío ({purchasedSelected.length})
+                </button>
+              )}
               <button onClick={() => setSelected(new Set())}
                 className="px-3 py-1.5 hover:bg-white/20 rounded-lg text-sm transition-colors ml-2">
                 Cancelar
@@ -861,6 +919,55 @@ export default function ContractDetail({
               {loading ? 'Guardando...' : 'Asignar'}
             </button>
           </div>
+        </Modal>
+      )}
+
+      {/* Shipment modal */}
+      {showShipmentModal && (
+        <Modal title="Crear envío" onClose={() => setShowShipmentModal(false)}>
+          <form onSubmit={handleCreateShipment} className="space-y-4">
+            <p className="text-sm text-gray-500">{purchasedSelected.length} ítem{purchasedSelected.length > 1 ? 's' : ''} de tipo compra pasarán a &quot;Enviado&quot;.</p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Método de envío</label>
+              <select value={shipmentForm.method} onChange={e => setShipmentForm({ ...shipmentForm, method: e.target.value as 'avion' | 'barco' | 'terrestre' })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+                <option value="avion">✈️ Avión</option>
+                <option value="barco">🚢 Barco</option>
+                <option value="terrestre">🚛 Terrestre</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Ciudad origen</label>
+              <input type="text" value={shipmentForm.origin_city} onChange={e => setShipmentForm({ ...shipmentForm, origin_city: e.target.value })} required
+                placeholder="Ej: Bogotá" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fecha despacho</label>
+                <input type="date" value={shipmentForm.dispatch_date} onChange={e => setShipmentForm({ ...shipmentForm, dispatch_date: e.target.value })} required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Llegada estimada</label>
+                <input type="date" value={shipmentForm.estimated_arrival} onChange={e => setShipmentForm({ ...shipmentForm, estimated_arrival: e.target.value })} required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
+              <textarea value={shipmentForm.notes} onChange={e => setShipmentForm({ ...shipmentForm, notes: e.target.value })}
+                rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none" />
+            </div>
+            {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => setShowShipmentModal(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">Cancelar</button>
+              <button type="submit" disabled={loading}
+                className="flex-1 bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 transition-colors">
+                {loading ? 'Creando...' : 'Crear envío'}
+              </button>
+            </div>
+          </form>
         </Modal>
       )}
 
