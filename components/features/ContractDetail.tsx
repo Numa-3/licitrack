@@ -1,10 +1,40 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 // ── Types ──────────────────────────────────────────────────────
+type Supplier = { id: string; name: string; whatsapp: string | null }
+type Profile = { id: string; name: string; role: string }
+type Category = { id: string; name: string; type: string }
+
+type ItemSupplier = { id: string; name: string; whatsapp: string | null } | null
+type ItemProfile = { id: string; name: string } | null
+
+type Item = {
+  id: string
+  item_number: number | null
+  short_name: string
+  description: string
+  type: 'purchase' | 'logistics' | 'service'
+  quantity: number
+  unit: string | null
+  sale_price: number | null
+  supplier_cost: number | null
+  status: string
+  payment_status: 'unpaid' | 'invoiced' | 'paid'
+  due_date: string | null
+  contact_phone: string | null
+  notes: string
+  category_id: string | null
+  supplier_id: string | null
+  assigned_to: string | null
+  created_by: string
+  suppliers: ItemSupplier
+  profiles: ItemProfile
+}
+
 type Contract = {
   id: string
   name: string
@@ -13,50 +43,40 @@ type Contract = {
   status: 'draft' | 'active' | 'completed' | 'cancelled'
   created_at: string
   updated_at: string
+  organization_id: string
   organizations: { name: string } | null
   created_by_profile: { name: string } | null
   assigned_to_profile: { name: string } | null
 }
 
-type Item = {
-  id: string
-  item_number: number | null
-  short_name: string
-  description: string
-  type: string
-  quantity: number
-  unit: string | null
-  sale_price: number | null
-  supplier_cost: number | null
-  status: string
-  payment_status: string
-  due_date: string | null
-  contact_phone: string | null
-  notes: string | null
-  supplier: { id: string; name: string; whatsapp: string | null } | null
-  assigned_to_profile: { id: string; name: string } | null
-  category: { id: string; name: string } | null
-}
+type AvailableSupplier = { id: string; name: string; whatsapp: string | null; city: string; trusted: boolean }
 
-type Supplier = { id: string; name: string; whatsapp: string | null; city: string | null }
-type Profile = { id: string; name: string; role: string }
-type Category = { id: string; name: string; type: string }
+type ActivityEntry = {
+  id: string
+  user_id: string
+  action: string
+  entity_type: string
+  entity_id: string
+  details: Record<string, unknown>
+  created_at: string
+}
 
 type Props = {
   contract: Contract
   items: Item[]
-  userRole: string
-  currentUserId: string
-  suppliers: Supplier[]
+  suppliers: AvailableSupplier[]
   profiles: Profile[]
   categories: Category[]
+  activityLog: ActivityEntry[]
+  userRole: string
+  currentUserId: string
 }
 
 // ── Constants ──────────────────────────────────────────────────
-const TYPE_LABELS: Record<string, string> = {
-  purchase: 'Compras', logistics: 'Logistica', service: 'Servicios', mixed: 'Mixto',
+const CONTRACT_TYPE_LABELS: Record<string, string> = {
+  purchase: 'Compras', logistics: 'Logística', service: 'Servicios', mixed: 'Mixto',
 }
-const TYPE_ICONS: Record<string, string> = {
+const CONTRACT_TYPE_ICONS: Record<string, string> = {
   purchase: '🛒', logistics: '🚚', service: '🔧', mixed: '📦',
 }
 
@@ -65,713 +85,1064 @@ const STATUS_FLOWS: Record<string, string[]> = {
   logistics: ['pending', 'in_progress', 'done'],
   service: ['pending', 'in_progress', 'done'],
 }
+
 const STATUS_LABELS: Record<string, string> = {
-  pending: 'Pendiente', sourced: 'Cotizado', purchased: 'Comprado',
-  shipped: 'Enviado', received: 'Recibido', in_progress: 'En progreso', done: 'Listo',
+  pending: 'Pendiente', sourced: 'Con proveedor', purchased: 'Comprado',
+  shipped: 'Enviado', received: 'Recibido', in_progress: 'En gestión',
+  done: 'Listo', completed: 'Completado',
 }
+
 const STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-gray-100 text-gray-600', sourced: 'bg-yellow-50 text-yellow-700',
-  purchased: 'bg-blue-50 text-blue-700', shipped: 'bg-purple-50 text-purple-700',
-  received: 'bg-green-50 text-green-700', in_progress: 'bg-blue-50 text-blue-700',
+  pending: 'bg-gray-100 text-gray-600',
+  sourced: 'bg-yellow-50 text-yellow-700',
+  purchased: 'bg-blue-50 text-blue-700',
+  shipped: 'bg-purple-50 text-purple-700',
+  received: 'bg-green-50 text-green-700',
+  in_progress: 'bg-yellow-50 text-yellow-700',
   done: 'bg-green-50 text-green-700',
+  completed: 'bg-green-50 text-green-700',
 }
+
 const PAYMENT_LABELS: Record<string, string> = {
   unpaid: 'Sin pagar', invoiced: 'Facturado', paid: 'Pagado',
 }
 const PAYMENT_COLORS: Record<string, string> = {
-  unpaid: 'bg-red-50 text-red-600', invoiced: 'bg-amber-50 text-amber-700',
+  unpaid: 'bg-red-50 text-red-600',
+  invoiced: 'bg-amber-50 text-amber-700',
   paid: 'bg-green-50 text-green-700',
 }
-const CONTRACT_STATUS_LABELS: Record<string, string> = {
-  draft: 'Borrador', active: 'Activo', completed: 'Completado', cancelled: 'Cancelado',
-}
-const CONTRACT_STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-600', active: 'bg-blue-50 text-blue-700',
-  completed: 'bg-green-50 text-green-700', cancelled: 'bg-red-50 text-red-600',
-}
-const FINAL_STATUSES = new Set(['completed', 'done', 'received'])
 
-function formatCurrency(n: number | null) {
-  if (n === null || n === undefined) return '—'
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(n)
+const FINAL_STATUSES = new Set(['completed', 'done', 'listo', 'finalizado', 'received'])
+
+const ACTION_LABELS: Record<string, string> = {
+  status_changed: 'Cambió estado',
+  payment_status_changed: 'Cambió estado de pago',
+  supplier_assigned: 'Asignó proveedor',
+  assigned_to_changed: 'Reasignó responsable',
+  item_updated: 'Editó ítem',
+  items_batch_status: 'Cambio masivo de estado',
+  items_batch_supplier: 'Asignación masiva de proveedor',
+  items_batch_assign: 'Asignación masiva de responsable',
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+function formatCurrency(n: number | null | undefined): string {
+  if (n == null) return '—'
+  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n)
+}
+
+function marginPct(sale: number | null, cost: number | null): number | null {
+  if (!sale || !cost || sale === 0) return null
+  return ((sale - cost) / sale) * 100
+}
+
+function marginColor(pct: number | null): string {
+  if (pct == null) return 'text-gray-400'
+  if (pct < 0) return 'text-red-600 font-semibold'
+  if (pct < 15) return 'text-orange-500 font-medium'
+  return 'text-green-600'
+}
+
+function buildWhatsAppUrl(phone: string | null, item: Item, contract: Contract): string | null {
+  if (!phone) return null
+  const clean = phone.replace(/\D/g, '')
+  if (clean.length < 7) return null
+
+  let msg = ''
+  if (item.type === 'purchase') {
+    msg = `Hola, te escribo de ${contract.organizations?.name || 'nuestra empresa'} sobre el contrato "${contract.name}". Necesitamos cotización para: ${item.short_name} (${item.quantity} ${item.unit || 'und'}). ¿Nos puedes ayudar?`
+  } else if (item.type === 'logistics') {
+    msg = `Hola, te escribo de ${contract.organizations?.name || 'nuestra empresa'} sobre "${contract.name}". Necesitamos coordinar: ${item.short_name}. ¿Podemos hablar?`
+  } else {
+    msg = `Hola, te escribo de ${contract.organizations?.name || 'nuestra empresa'} sobre "${contract.name}". Necesitamos el servicio: ${item.short_name}. ¿Están disponibles?`
+  }
+  return `https://wa.me/${clean}?text=${encodeURIComponent(msg)}`
 }
 
 // ── Component ──────────────────────────────────────────────────
 export default function ContractDetail({
-  contract: initial, items: initialItems, userRole, currentUserId, suppliers, profiles, categories,
+  contract: initialContract, items: initialItems, suppliers: suppliersRaw, profiles: profilesRaw, categories: categoriesRaw,
+  activityLog: activityLogRaw, userRole, currentUserId,
 }: Props) {
   const router = useRouter()
   const supabase = createClient()
 
-  // Contract state
-  const [contract, setContract] = useState(initial)
-  const [allItems, setAllItems] = useState<Item[]>(initialItems)
+  // Defensive defaults for server data
+  const suppliers = suppliersRaw || []
+  const profiles = profilesRaw || []
+  const categories = categoriesRaw || []
+  const activityLogInit = activityLogRaw || []
 
-  // UI state
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [detailItem, setDetailItem] = useState<Item | null>(null)
-  const [showEditModal, setShowEditModal] = useState(false)
-  const [showSupplierModal, setShowSupplierModal] = useState(false)
-  const [editForm, setEditForm] = useState({ name: initial.name, entity: initial.entity, type: initial.type })
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  // ── State ────────────────────────────────────────────
+  const [contract, setContract] = useState(initialContract)
+  const [items, setItems] = useState(initialItems || [])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [sideItem, setSideItem] = useState<Item | null>(null)
+  const [showEditContract, setShowEditContract] = useState(false)
+  const [editForm, setEditForm] = useState({ name: initialContract.name, entity: initialContract.entity, type: initialContract.type })
 
-  // Supplier modal state
+  // Batch modals
+  const [batchModal, setBatchModal] = useState<'supplier' | 'status' | 'assign' | null>(null)
+  const [batchSupplier, setBatchSupplier] = useState('')
+  const [batchSupplierCost, setBatchSupplierCost] = useState('')
+  const [batchStatus, setBatchStatus] = useState('')
+  const [batchAssign, setBatchAssign] = useState('')
   const [supplierSearch, setSupplierSearch] = useState('')
-  const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null)
-  const [supplierCost, setSupplierCost] = useState('')
+
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const isJefe = userRole === 'jefe'
   const isActive = contract.status === 'active' || contract.status === 'draft'
 
-  // ── Computed ────────────────────────────────────────────────
+  // ── Derived data ─────────────────────────────────────
   const grouped = useMemo(() => {
-    const groups: Record<string, { supplier: { id: string; name: string } | null; items: Item[] }> = {}
-    for (const item of allItems) {
-      const key = item.supplier?.id ?? '__unassigned__'
-      if (!groups[key]) groups[key] = { supplier: item.supplier, items: [] }
+    const groups: Record<string, { supplier: ItemSupplier; items: Item[] }> = {}
+    for (const item of items) {
+      const key = item.supplier_id || '__unassigned__'
+      if (!groups[key]) {
+        groups[key] = { supplier: item.suppliers, items: [] }
+      }
       groups[key].items.push(item)
     }
-    // Put unassigned first
+    // "Sin asignar" first, then alphabetically by supplier name
     const entries = Object.entries(groups)
-    entries.sort((a, b) => {
-      if (a[0] === '__unassigned__') return -1
-      if (b[0] === '__unassigned__') return 1
-      return (a[1].supplier?.name ?? '').localeCompare(b[1].supplier?.name ?? '')
+    entries.sort(([a, aGroup], [b, bGroup]) => {
+      if (a === '__unassigned__') return -1
+      if (b === '__unassigned__') return 1
+      return (aGroup.supplier?.name || '').localeCompare(bGroup.supplier?.name || '')
     })
-    return entries.map(([, v]) => v)
-  }, [allItems])
+    return entries
+  }, [items])
 
-  const margin = useMemo(() => {
-    let income = 0, cost = 0
-    for (const item of allItems) {
-      if (item.sale_price) income += item.sale_price * item.quantity
-      if (item.supplier_cost) cost += item.supplier_cost * item.quantity
+  // Margin summary
+  const marginSummary = useMemo(() => {
+    let totalSale = 0, totalCost = 0, lowMarginCount = 0, negativeMarginCount = 0
+    for (const item of items) {
+      if (item.sale_price) totalSale += Number(item.sale_price) * Number(item.quantity)
+      if (item.supplier_cost) totalCost += Number(item.supplier_cost) * Number(item.quantity)
+      const m = marginPct(item.sale_price, item.supplier_cost)
+      if (m != null && m < 0) negativeMarginCount++
+      else if (m != null && m < 15) lowMarginCount++
     }
-    const profit = income - cost
-    const pct = income > 0 ? (profit / income) * 100 : 0
-    return { income, cost, profit, pct }
-  }, [allItems])
+    const totalMargin = totalSale > 0 ? ((totalSale - totalCost) / totalSale) * 100 : null
+    return { totalSale, totalCost, totalMargin, lowMarginCount, negativeMarginCount }
+  }, [items])
 
-  // Recent suppliers used in this contract
-  const recentSupplierIds = useMemo(() => {
-    const ids: string[] = []
-    for (const item of allItems) {
-      if (item.supplier && !ids.includes(item.supplier.id)) {
-        ids.push(item.supplier.id)
-        if (ids.length >= 5) break
+  // Recent suppliers in this contract (for chips)
+  const recentSuppliers = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const item of items) {
+      if (item.supplier_id && item.suppliers?.name) {
+        seen.set(item.supplier_id, item.suppliers.name)
       }
     }
-    return ids
-  }, [allItems])
+    return Array.from(seen.entries()).slice(0, 5).map(([id, name]) => ({ id, name }))
+  }, [items])
 
-  // ── Helpers ─────────────────────────────────────────────────
+  // Filtered suppliers for search
+  const filteredSuppliers = useMemo(() => {
+    const list = suppliers || []
+    if (!supplierSearch) return list.slice(0, 10)
+    const q = supplierSearch.toLowerCase()
+    return list.filter(s => s.name.toLowerCase().includes(q)).slice(0, 10)
+  }, [suppliers, supplierSearch])
+
+  // Valid statuses for selected items
+  const validStatuses = useMemo(() => {
+    const selectedItems = items.filter(i => selected.has(i.id))
+    const types = new Set(selectedItems.map(i => i.type))
+    if (types.size === 1) {
+      const t = [...types][0]
+      return STATUS_FLOWS[t] || STATUS_FLOWS.service
+    }
+    // Mixed types — only show common statuses
+    return ['pending', 'in_progress', 'done']
+  }, [items, selected])
+
+  // ── Activity log helper ──────────────────────────────
+  const logActivity = useCallback(async (action: string, entityId: string, details: Record<string, unknown>) => {
+    await supabase.from('activity_log').insert({
+      user_id: currentUserId,
+      action,
+      entity_type: 'item',
+      entity_id: entityId,
+      details,
+    })
+  }, [supabase, currentUserId])
+
+  // ── Handlers ─────────────────────────────────────────
   function toggleSelect(id: string) {
-    setSelectedIds((prev) => {
+    setSelected(prev => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
   }
 
-  function toggleAll() {
-    if (selectedIds.size === allItems.length) {
-      setSelectedIds(new Set())
+  function toggleSelectAll() {
+    if (selected.size === items.length) {
+      setSelected(new Set())
     } else {
-      setSelectedIds(new Set(allItems.map((i) => i.id)))
+      setSelected(new Set(items.map(i => i.id)))
     }
   }
 
-  async function logActivity(action: string, entityType: string, entityId: string, details: Record<string, unknown>) {
-    await supabase.from('activity_log').insert({
-      user_id: currentUserId, action, entity_type: entityType, entity_id: entityId, details,
-    })
-  }
+  async function handleBatchSupplier() {
+    if (!batchSupplier) return
+    setLoading(true)
+    setError(null)
+    const ids = [...selected]
+    const updateData: Record<string, unknown> = { supplier_id: batchSupplier }
+    if (batchSupplierCost) updateData.supplier_cost = parseFloat(batchSupplierCost)
 
-  function updateItemLocal(id: string, changes: Partial<Item>) {
-    setAllItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...changes } : i)))
-    if (detailItem?.id === id) setDetailItem((prev) => prev ? { ...prev, ...changes } : prev)
-  }
+    const { error: err } = await supabase
+      .from('items')
+      .update(updateData)
+      .in('id', ids)
 
-  // ── Item actions ────────────────────────────────────────────
-  async function updateItemStatus(itemId: string, newStatus: string) {
-    const item = allItems.find((i) => i.id === itemId)
-    if (!item) return
-    const oldStatus = item.status
-    const { error } = await supabase.from('items').update({ status: newStatus }).eq('id', itemId)
-    if (error) { setError(error.message); return }
-    updateItemLocal(itemId, { status: newStatus })
-    await logActivity('item_status_changed', 'item', itemId, {
-      from: oldStatus, to: newStatus, item_name: item.short_name,
-    })
-  }
+    if (err) { setError(err.message); setLoading(false); return }
 
-  async function updateItemPayment(itemId: string, newStatus: string) {
-    const item = allItems.find((i) => i.id === itemId)
-    if (!item) return
-    const oldStatus = item.payment_status
-    const { error } = await supabase.from('items').update({ payment_status: newStatus }).eq('id', itemId)
-    if (error) { setError(error.message); return }
-    updateItemLocal(itemId, { payment_status: newStatus })
-    await logActivity('payment_status_changed', 'item', itemId, {
-      from: oldStatus, to: newStatus, item_name: item.short_name,
-    })
-  }
-
-  async function assignSupplierToItems(itemIds: string[], supplierId: string, cost: number | null) {
-    const supplier = suppliers.find((s) => s.id === supplierId)
-    const { error } = await supabase.from('items')
-      .update({ supplier_id: supplierId, ...(cost !== null ? { supplier_cost: cost } : {}) })
-      .in('id', itemIds)
-    if (error) { setError(error.message); return }
-
-    setAllItems((prev) => prev.map((i) =>
-      itemIds.includes(i.id) ? {
-        ...i,
-        supplier: supplier ? { id: supplier.id, name: supplier.name, whatsapp: supplier.whatsapp } : i.supplier,
-        supplier_cost: cost ?? i.supplier_cost,
-      } : i
-    ))
-    for (const id of itemIds) {
-      const item = allItems.find((i) => i.id === id)
-      await logActivity('supplier_assigned', 'item', id, {
-        supplier_name: supplier?.name, item_name: item?.short_name,
-      })
-    }
-    setSelectedIds(new Set())
-    setShowSupplierModal(false)
-  }
-
-  async function batchChangeStatus(newStatus: string) {
-    const ids = Array.from(selectedIds)
-    const { error } = await supabase.from('items').update({ status: newStatus }).in('id', ids)
-    if (error) { setError(error.message); return }
+    const supplierName = suppliers.find(s => s.id === batchSupplier)?.name || ''
     for (const id of ids) {
-      const item = allItems.find((i) => i.id === id)
-      if (item) {
-        updateItemLocal(id, { status: newStatus })
-        await logActivity('item_status_changed', 'item', id, {
-          from: item.status, to: newStatus, item_name: item.short_name,
-        })
+      await logActivity('items_batch_supplier', id, { supplier: supplierName, cost: batchSupplierCost || null })
+    }
+
+    setBatchModal(null)
+    setBatchSupplier('')
+    setBatchSupplierCost('')
+    setSupplierSearch('')
+    setSelected(new Set())
+    setLoading(false)
+    router.refresh()
+  }
+
+  async function handleBatchStatus() {
+    if (!batchStatus) return
+    setLoading(true)
+    setError(null)
+    const ids = [...selected]
+
+    const { error: err } = await supabase
+      .from('items')
+      .update({ status: batchStatus })
+      .in('id', ids)
+
+    if (err) { setError(err.message); setLoading(false); return }
+
+    for (const id of ids) {
+      await logActivity('items_batch_status', id, { new_status: batchStatus })
+    }
+
+    setBatchModal(null)
+    setBatchStatus('')
+    setSelected(new Set())
+    setLoading(false)
+    router.refresh()
+  }
+
+  async function handleBatchAssign() {
+    if (!batchAssign) return
+    setLoading(true)
+    setError(null)
+    const ids = [...selected]
+
+    const { error: err } = await supabase
+      .from('items')
+      .update({ assigned_to: batchAssign })
+      .in('id', ids)
+
+    if (err) { setError(err.message); setLoading(false); return }
+
+    const assignName = profiles.find(p => p.id === batchAssign)?.name || ''
+    for (const id of ids) {
+      await logActivity('items_batch_assign', id, { assigned_to: assignName })
+    }
+
+    setBatchModal(null)
+    setBatchAssign('')
+    setSelected(new Set())
+    setLoading(false)
+    router.refresh()
+  }
+
+  // Side panel: update individual item field
+  async function updateItemField(itemId: string, field: string, value: unknown, label?: string) {
+    setLoading(true)
+    setError(null)
+
+    const { error: err } = await supabase
+      .from('items')
+      .update({ [field]: value })
+      .eq('id', itemId)
+
+    if (err) { setError(err.message); setLoading(false); return }
+
+    // Log activity
+    const actionMap: Record<string, string> = {
+      status: 'status_changed',
+      payment_status: 'payment_status_changed',
+      supplier_id: 'supplier_assigned',
+      assigned_to: 'assigned_to_changed',
+    }
+    await logActivity(actionMap[field] || 'item_updated', itemId, { field, new_value: label || value })
+
+    // Update local state
+    setItems(prev => prev.map(i => {
+      if (i.id !== itemId) return i
+      const updated = { ...i, [field]: value }
+      if (field === 'supplier_id') {
+        const sup = suppliers.find(s => s.id === value)
+        updated.suppliers = sup ? { id: sup.id, name: sup.name, whatsapp: sup.whatsapp } : null
       }
-    }
-    setSelectedIds(new Set())
+      if (field === 'assigned_to') {
+        const prof = profiles.find(p => p.id === value)
+        updated.profiles = prof ? { id: prof.id, name: prof.name } : null
+      }
+      return updated
+    }))
+    setSideItem(prev => {
+      if (!prev || prev.id !== itemId) return prev
+      const updated = { ...prev, [field]: value }
+      if (field === 'supplier_id') {
+        const sup = suppliers.find(s => s.id === value)
+        updated.suppliers = sup ? { id: sup.id, name: sup.name, whatsapp: sup.whatsapp } : null
+      }
+      if (field === 'assigned_to') {
+        const prof = profiles.find(p => p.id === value)
+        updated.profiles = prof ? { id: prof.id, name: prof.name } : null
+      }
+      return updated
+    })
+
+    setLoading(false)
   }
 
-  async function batchAssignTo(profileId: string) {
-    const ids = Array.from(selectedIds)
-    const profile = profiles.find((p) => p.id === profileId)
-    const { error } = await supabase.from('items').update({ assigned_to: profileId }).in('id', ids)
-    if (error) { setError(error.message); return }
-    setAllItems((prev) => prev.map((i) =>
-      ids.includes(i.id) ? {
-        ...i,
-        assigned_to_profile: profile ? { id: profile.id, name: profile.name } : i.assigned_to_profile,
-      } : i
-    ))
-    setSelectedIds(new Set())
+  // Save side panel notes/description
+  async function saveSideItemDetails(itemId: string, data: { description?: string; notes?: string; contact_phone?: string; supplier_cost?: number | null; sale_price?: number | null }) {
+    setLoading(true)
+    setError(null)
+
+    const { error: err } = await supabase
+      .from('items')
+      .update(data)
+      .eq('id', itemId)
+
+    if (err) { setError(err.message); setLoading(false); return }
+
+    await logActivity('item_updated', itemId, { fields: Object.keys(data) })
+
+    setItems(prev => prev.map(i => i.id === itemId ? { ...i, ...data } : i))
+    setSideItem(prev => prev && prev.id === itemId ? { ...prev, ...data } : prev)
+    setLoading(false)
   }
 
-  // ── Detail panel actions ────────────────────────────────────
-  async function saveDetailField(field: string, value: unknown) {
-    if (!detailItem) return
-    const { error } = await supabase.from('items').update({ [field]: value }).eq('id', detailItem.id)
-    if (error) { setError(error.message); return }
-    updateItemLocal(detailItem.id, { [field]: value } as Partial<Item>)
-  }
-
-  function getWhatsAppUrl(item: Item) {
-    const phone = item.contact_phone || item.supplier?.whatsapp
-    if (!phone) return null
-    const messages: Record<string, string> = {
-      purchase: `Hola, me comunico por el item "${item.short_name}" (${item.quantity} ${item.unit ?? 'und'}). Necesito cotizacion y disponibilidad.`,
-      logistics: `Hola, me comunico por la coordinacion de "${item.short_name}". Necesito confirmar detalles.`,
-      service: `Hola, me comunico por el servicio "${item.short_name}". Necesito confirmar disponibilidad y precio.`,
-    }
-    const msg = messages[item.type] ?? messages.purchase
-    return `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`
-  }
-
-  // ── Contract actions ────────────────────────────────────────
-  async function handleEdit(e: React.FormEvent) {
+  // Contract edit
+  async function handleEditContract(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError(null)
-    const { data, error } = await supabase.from('contracts').update({
-      name: editForm.name, entity: editForm.entity, type: editForm.type,
-    }).eq('id', contract.id).select(`
-      id, name, entity, type, status, created_at, updated_at,
-      organizations ( name ),
-      created_by_profile:profiles!contracts_created_by_fkey ( name ),
-      assigned_to_profile:profiles!contracts_assigned_to_fkey ( name )
-    `).single()
-    if (error) { setError(error.message) } else {
-      setContract(data as unknown as Contract)
-      setShowEditModal(false)
-    }
+
+    const { data, error: err } = await supabase
+      .from('contracts')
+      .update({ name: editForm.name, entity: editForm.entity, type: editForm.type })
+      .eq('id', contract.id)
+      .select(`
+        id, name, entity, type, status, created_at, updated_at, organization_id,
+        organizations ( name ),
+        created_by_profile:profiles!contracts_created_by_fkey ( name ),
+        assigned_to_profile:profiles!contracts_assigned_to_fkey ( name )
+      `)
+      .single()
+
+    if (err) { setError(err.message) } else { setContract(data as unknown as Contract); setShowEditContract(false) }
     setLoading(false)
   }
 
   async function handleArchive() {
-    if (!confirm('Archivar este contrato? Quedara inactivo pero no se eliminara.')) return
+    if (!confirm('¿Archivar este contrato? Quedará inactivo pero no se eliminará.')) return
     setLoading(true)
-    const { error } = await supabase.from('contracts').update({ deleted_at: new Date().toISOString() }).eq('id', contract.id)
-    if (error) { setError(error.message) } else { router.push('/dashboard') }
-    setLoading(false)
+    const { error: err } = await supabase.from('contracts').update({ deleted_at: new Date().toISOString() }).eq('id', contract.id)
+    if (err) { setError(err.message); setLoading(false); return }
+    router.push('/dashboard')
   }
 
   async function handleComplete() {
-    const pending = allItems.filter((i) => !FINAL_STATUSES.has(i.status))
+    const pending = items.filter(i => !FINAL_STATUSES.has(i.status))
     if (pending.length > 0) {
-      setError(`Hay ${pending.length} item(s) sin completar.`)
+      setError(`Hay ${pending.length} ${pending.length === 1 ? 'ítem' : 'ítems'} sin completar. Finalizalos antes de cerrar el contrato.`)
       return
     }
-    if (!confirm('Marcar este contrato como completado?')) return
+    if (!confirm('¿Marcar este contrato como completado?')) return
     setLoading(true)
-    const { data, error } = await supabase.from('contracts').update({ status: 'completed' }).eq('id', contract.id).select(`
-      id, name, entity, type, status, created_at, updated_at,
-      organizations ( name ),
-      created_by_profile:profiles!contracts_created_by_fkey ( name ),
-      assigned_to_profile:profiles!contracts_assigned_to_fkey ( name )
-    `).single()
-    if (error) { setError(error.message) } else { setContract(data as unknown as Contract) }
+    const { data, error: err } = await supabase
+      .from('contracts')
+      .update({ status: 'completed' })
+      .eq('id', contract.id)
+      .select(`
+        id, name, entity, type, status, created_at, updated_at, organization_id,
+        organizations ( name ),
+        created_by_profile:profiles!contracts_created_by_fkey ( name ),
+        assigned_to_profile:profiles!contracts_assigned_to_fkey ( name )
+      `)
+      .single()
+    if (err) { setError(err.message) } else { setContract(data as unknown as Contract) }
     setLoading(false)
   }
 
-  // Status flow for the contract type
-  const statusFlow = STATUS_FLOWS[contract.type] ?? STATUS_FLOWS.purchase
+  // ── Render ───────────────────────────────────────────
+  const contractStatusColor: Record<string, string> = {
+    draft: 'bg-gray-100 text-gray-600', active: 'bg-blue-50 text-blue-700',
+    completed: 'bg-green-50 text-green-700', cancelled: 'bg-red-50 text-red-600',
+  }
+  const contractStatusLabel: Record<string, string> = {
+    draft: 'Borrador', active: 'Activo', completed: 'Completado', cancelled: 'Cancelado',
+  }
 
-  // ── Render ──────────────────────────────────────────────────
   return (
-    <div className="p-8">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <div className="flex items-center gap-3 mb-1">
-            <span className="text-2xl">{TYPE_ICONS[contract.type]}</span>
-            <h1 className="text-2xl font-bold text-gray-900">{contract.name}</h1>
-            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${CONTRACT_STATUS_COLORS[contract.status]}`}>
-              {CONTRACT_STATUS_LABELS[contract.status]}
-            </span>
+    <div className="flex h-full">
+      {/* Main content */}
+      <div className={`flex-1 overflow-y-auto p-8 ${sideItem ? 'mr-[420px]' : ''}`}>
+
+        {/* Header */}
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <span className="text-2xl">{CONTRACT_TYPE_ICONS[contract.type]}</span>
+              <h1 className="text-2xl font-bold text-gray-900">{contract.name}</h1>
+              <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${contractStatusColor[contract.status]}`}>
+                {contractStatusLabel[contract.status]}
+              </span>
+            </div>
+            <p className="text-gray-500 text-sm">
+              {contract.entity} · {contract.organizations?.name ?? '—'}
+            </p>
           </div>
-          <p className="text-gray-500 text-sm">
-            {contract.entity} · {contract.organizations?.name ?? '—'}
-          </p>
-        </div>
-        {isJefe && (
-          <div className="flex items-center gap-2">
-            <button onClick={() => { setEditForm({ name: contract.name, entity: contract.entity, type: contract.type }); setError(null); setShowEditModal(true) }}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              Editar
-            </button>
-            {isActive && (
-              <>
+
+          {isJefe && (
+            <div className="flex items-center gap-2">
+              <button onClick={() => { setEditForm({ name: contract.name, entity: contract.entity, type: contract.type }); setError(null); setShowEditContract(true) }}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                Editar
+              </button>
+              {isActive && (
                 <button onClick={handleComplete} disabled={loading}
                   className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors">
                   Completar contrato
                 </button>
+              )}
+              {isActive && (
                 <button onClick={handleArchive} disabled={loading}
                   className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50 transition-colors">
                   Archivar
                 </button>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      {error && (
-        <div className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 px-4 py-3 rounded-lg flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600">✕</button>
-        </div>
-      )}
-
-      {/* Info cards + Margin summary */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Contrato</h2>
-          <dl className="space-y-2 text-sm">
-            <div className="flex justify-between"><dt className="text-gray-500">Tipo</dt><dd className="text-gray-900 font-medium">{TYPE_ICONS[contract.type]} {TYPE_LABELS[contract.type]}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-500">Entidad</dt><dd className="text-gray-900">{contract.entity}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-500">Empresa</dt><dd className="text-gray-900">{contract.organizations?.name ?? '—'}</dd></div>
-          </dl>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Equipo</h2>
-          <dl className="space-y-2 text-sm">
-            <div className="flex justify-between"><dt className="text-gray-500">Creado por</dt><dd className="text-gray-900">{contract.created_by_profile?.name ?? '—'}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-500">Responsable</dt><dd className="text-gray-900">{contract.assigned_to_profile?.name ?? '—'}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-500">Creado</dt><dd className="text-gray-500">{new Date(contract.created_at).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })}</dd></div>
-          </dl>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Margen</h2>
-          <dl className="space-y-2 text-sm">
-            <div className="flex justify-between"><dt className="text-gray-500">Ingreso</dt><dd className="text-gray-900 font-medium">{formatCurrency(margin.income)}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-500">Costo</dt><dd className="text-gray-900">{formatCurrency(margin.cost)}</dd></div>
-            <div className="flex justify-between">
-              <dt className="text-gray-500">Margen</dt>
-              <dd className={`font-bold ${margin.pct < 0 ? 'text-red-600' : margin.pct < 15 ? 'text-amber-600' : 'text-green-600'}`}>
-                {formatCurrency(margin.profit)} ({margin.pct.toFixed(1)}%)
-              </dd>
-            </div>
-          </dl>
-        </div>
-      </div>
-
-      {/* Batch toolbar */}
-      {selectedIds.size > 0 && (
-        <div className="mb-4 bg-gray-900 text-white px-4 py-3 rounded-lg flex items-center gap-4 text-sm">
-          <span className="font-medium">{selectedIds.size} seleccionado(s)</span>
-          <div className="h-4 w-px bg-gray-600" />
-          <button onClick={() => setShowSupplierModal(true)}
-            className="hover:text-blue-300 transition-colors">Asignar proveedor</button>
-          <div className="h-4 w-px bg-gray-600" />
-          <select onChange={(e) => { if (e.target.value) batchChangeStatus(e.target.value); e.target.value = '' }}
-            className="bg-gray-800 text-white border border-gray-600 rounded px-2 py-1 text-xs">
-            <option value="">Cambiar estado...</option>
-            {statusFlow.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
-          </select>
-          <select onChange={(e) => { if (e.target.value) batchAssignTo(e.target.value); e.target.value = '' }}
-            className="bg-gray-800 text-white border border-gray-600 rounded px-2 py-1 text-xs">
-            <option value="">Asignar a...</option>
-            {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <div className="flex-1" />
-          <button onClick={() => setSelectedIds(new Set())} className="text-gray-400 hover:text-white">Cancelar</button>
-        </div>
-      )}
-
-      {/* Items grouped by supplier */}
-      <div className="flex gap-6">
-        <div className={`${detailItem ? 'w-2/3' : 'w-full'} transition-all`}>
-          <div className="bg-white border border-gray-200 rounded-xl">
-            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-              <h2 className="font-semibold text-gray-900">
-                Items <span className="ml-1 text-sm font-normal text-gray-400">({allItems.length})</span>
-              </h2>
-              <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
-                <input type="checkbox" checked={selectedIds.size === allItems.length && allItems.length > 0}
-                  onChange={toggleAll} className="rounded border-gray-300" />
-                Seleccionar todo
-              </label>
-            </div>
-
-            {allItems.length === 0 ? (
-              <div className="px-5 py-10 text-center text-gray-400">
-                <p>No hay items en este contrato.</p>
-              </div>
-            ) : (
-              <div>
-                {grouped.map((group, gi) => (
-                  <div key={gi}>
-                    {/* Group header */}
-                    <div className="px-5 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
-                      <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        {group.supplier?.name ?? 'Sin asignar'}
-                      </span>
-                      <span className="text-xs text-gray-400">({group.items.length})</span>
-                    </div>
-                    {/* Items */}
-                    {group.items.map((item) => {
-                      const itemMargin = item.sale_price && item.supplier_cost
-                        ? ((item.sale_price - item.supplier_cost) / item.sale_price) * 100 : null
-                      return (
-                        <div key={item.id}
-                          className={`px-5 py-3 border-b border-gray-100 flex items-center gap-3 hover:bg-gray-50 transition-colors cursor-pointer ${detailItem?.id === item.id ? 'bg-blue-50' : ''}`}
-                          onClick={() => setDetailItem(item)}>
-                          <input type="checkbox" checked={selectedIds.has(item.id)}
-                            onChange={(e) => { e.stopPropagation(); toggleSelect(item.id) }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="rounded border-gray-300" />
-                          <span className="text-xs text-gray-400 w-6 text-right">{item.item_number ?? '—'}</span>
-                          <span className="font-medium text-gray-900 text-sm flex-1 truncate">{item.short_name}</span>
-                          <span className="text-xs text-gray-500 w-24 text-right">
-                            {item.quantity} {item.unit ?? 'und'}
-                          </span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[item.status] ?? 'bg-gray-100 text-gray-600'}`}>
-                            {STATUS_LABELS[item.status] ?? item.status}
-                          </span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${PAYMENT_COLORS[item.payment_status] ?? 'bg-gray-100 text-gray-600'}`}>
-                            {PAYMENT_LABELS[item.payment_status] ?? item.payment_status}
-                          </span>
-                          {itemMargin !== null && (
-                            <span className={`text-xs font-medium w-14 text-right ${itemMargin < 0 ? 'text-red-600' : itemMargin < 15 ? 'text-amber-600' : 'text-green-600'}`}>
-                              {itemMargin.toFixed(0)}%
-                            </span>
-                          )}
-                          <span className="text-xs text-gray-400 w-20 truncate text-right">
-                            {item.assigned_to_profile?.name ?? ''}
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Detail side panel */}
-        {detailItem && (
-          <div className="w-1/3 bg-white border border-gray-200 rounded-xl p-5 sticky top-4 self-start max-h-[calc(100vh-6rem)] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-900 text-lg">{detailItem.short_name}</h3>
-              <button onClick={() => setDetailItem(null)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
-            </div>
-
-            {/* Description */}
-            <p className="text-sm text-gray-600 mb-4 whitespace-pre-wrap">{detailItem.description}</p>
-
-            {/* Quick info */}
-            <div className="space-y-3 mb-4">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Cantidad</span>
-                <span className="text-gray-900">{detailItem.quantity} {detailItem.unit ?? 'und'}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Precio venta</span>
-                <span className="text-gray-900">{formatCurrency(detailItem.sale_price)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Costo proveedor</span>
-                <span className="text-gray-900">{formatCurrency(detailItem.supplier_cost)}</span>
-              </div>
-              {detailItem.sale_price && detailItem.supplier_cost && (() => {
-                const m = ((detailItem.sale_price - detailItem.supplier_cost) / detailItem.sale_price) * 100
-                return (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Margen</span>
-                    <span className={`font-bold ${m < 0 ? 'text-red-600' : m < 15 ? 'text-amber-600' : 'text-green-600'}`}>
-                      {m.toFixed(1)}%
-                    </span>
-                  </div>
-                )
-              })()}
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Categoria</span>
-                <span className="text-gray-900">{detailItem.category?.name ?? '—'}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Proveedor</span>
-                <span className="text-gray-900">{detailItem.supplier?.name ?? 'Sin asignar'}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Responsable</span>
-                <span className="text-gray-900">{detailItem.assigned_to_profile?.name ?? '—'}</span>
-              </div>
-            </div>
-
-            {/* Logistics status */}
-            <div className="mb-4">
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2 block">Estado logistico</label>
-              <div className="flex flex-wrap gap-1">
-                {(STATUS_FLOWS[detailItem.type] ?? STATUS_FLOWS.purchase).map((s) => (
-                  <button key={s} onClick={() => updateItemStatus(detailItem.id, s)}
-                    className={`text-xs px-2.5 py-1 rounded-full transition-colors ${detailItem.status === s
-                      ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                    {STATUS_LABELS[s]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Payment status */}
-            <div className="mb-4">
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2 block">Estado de pago</label>
-              <div className="flex gap-1">
-                {['unpaid', 'invoiced', 'paid'].map((s) => (
-                  <button key={s} onClick={() => updateItemPayment(detailItem.id, s)}
-                    className={`text-xs px-2.5 py-1 rounded-full transition-colors ${detailItem.payment_status === s
-                      ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                    {PAYMENT_LABELS[s]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Editable fields */}
-            <div className="space-y-3 mb-4">
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">Costo proveedor</label>
-                <input type="number" defaultValue={detailItem.supplier_cost ?? ''}
-                  onBlur={(e) => saveDetailField('supplier_cost', e.target.value ? Number(e.target.value) : null)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm text-gray-900 bg-white" />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">Categoria</label>
-                <select defaultValue={detailItem.category?.id ?? ''}
-                  onChange={(e) => {
-                    saveDetailField('category_id', e.target.value || null)
-                    const cat = categories.find((c) => c.id === e.target.value)
-                    updateItemLocal(detailItem.id, { category: cat ? { id: cat.id, name: cat.name } : null })
-                  }}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm text-gray-900 bg-white">
-                  <option value="">— Sin categoria —</option>
-                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">Responsable</label>
-                <select defaultValue={detailItem.assigned_to_profile?.id ?? ''}
-                  onChange={(e) => {
-                    saveDetailField('assigned_to', e.target.value || null)
-                    const p = profiles.find((pr) => pr.id === e.target.value)
-                    updateItemLocal(detailItem.id, {
-                      assigned_to_profile: p ? { id: p.id, name: p.name } : null,
-                    })
-                  }}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm text-gray-900 bg-white">
-                  <option value="">— Sin asignar —</option>
-                  {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">Notas</label>
-                <textarea defaultValue={detailItem.notes ?? ''} rows={2}
-                  onBlur={(e) => saveDetailField('notes', e.target.value || null)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm text-gray-900 bg-white resize-none" />
-              </div>
-            </div>
-
-            {/* WhatsApp button */}
-            {(() => {
-              const url = getWhatsAppUrl(detailItem)
-              return url ? (
-                <a href={url} target="_blank" rel="noopener noreferrer"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors mb-4">
-                  WhatsApp
-                </a>
-              ) : null
-            })()}
-          </div>
-        )}
-      </div>
-
-      {/* Supplier modal */}
-      {showSupplierModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-            <div className="p-6 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Asignar proveedor</h2>
-              <p className="text-sm text-gray-500 mt-1">{selectedIds.size} item(s) seleccionado(s)</p>
-            </div>
-            <div className="p-6 space-y-4">
-              {/* Recent suppliers */}
-              {recentSupplierIds.length > 0 && (
-                <div>
-                  <label className="text-xs text-gray-500 mb-2 block">Recientes en este contrato</label>
-                  <div className="flex flex-wrap gap-2">
-                    {recentSupplierIds.map((id) => {
-                      const s = suppliers.find((x) => x.id === id)
-                      if (!s) return null
-                      return (
-                        <button key={id} onClick={() => setSelectedSupplierId(id)}
-                          className={`text-xs px-3 py-1.5 rounded-full transition-colors ${selectedSupplierId === id
-                            ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                          {s.name}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
               )}
+            </div>
+          )}
+        </div>
 
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">Buscar proveedor</label>
-                <input type="text" value={supplierSearch} onChange={(e) => setSupplierSearch(e.target.value)}
-                  placeholder="Nombre del proveedor..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                {supplierSearch && (
-                  <div className="mt-1 border border-gray-200 rounded-lg max-h-40 overflow-y-auto">
-                    {suppliers
-                      .filter((s) => s.name.toLowerCase().includes(supplierSearch.toLowerCase()))
-                      .map((s) => (
-                        <button key={s.id} onClick={() => { setSelectedSupplierId(s.id); setSupplierSearch('') }}
-                          className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${selectedSupplierId === s.id ? 'bg-gray-100 font-medium' : ''}`}>
-                          {s.name} {s.city ? `· ${s.city}` : ''}
-                        </button>
-                      ))}
-                  </div>
+        {error && (
+          <div className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 px-4 py-3 rounded-lg">
+            {error}
+          </div>
+        )}
+
+        {/* Margin summary */}
+        {items.length > 0 && (marginSummary.totalSale > 0 || marginSummary.totalCost > 0) && (
+          <div className="grid grid-cols-4 gap-4 mb-6">
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Ingreso total</p>
+              <p className="text-lg font-semibold text-gray-900">{formatCurrency(marginSummary.totalSale)}</p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Costo total</p>
+              <p className="text-lg font-semibold text-gray-900">{formatCurrency(marginSummary.totalCost)}</p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Margen</p>
+              <p className={`text-lg font-semibold ${marginColor(marginSummary.totalMargin)}`}>
+                {marginSummary.totalMargin != null ? `${marginSummary.totalMargin.toFixed(1)}%` : '—'}
+              </p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Alertas</p>
+              <div className="flex gap-2">
+                {marginSummary.negativeMarginCount > 0 && (
+                  <span className="text-sm text-red-600 font-medium">{marginSummary.negativeMarginCount} negativo{marginSummary.negativeMarginCount > 1 ? 's' : ''}</span>
+                )}
+                {marginSummary.lowMarginCount > 0 && (
+                  <span className="text-sm text-orange-500 font-medium">{marginSummary.lowMarginCount} bajo{marginSummary.lowMarginCount > 1 ? 's' : ''}</span>
+                )}
+                {marginSummary.negativeMarginCount === 0 && marginSummary.lowMarginCount === 0 && (
+                  <span className="text-sm text-green-600">Todo bien</span>
                 )}
               </div>
-
-              {selectedSupplierId && (
-                <p className="text-sm text-gray-700">
-                  Seleccionado: <strong>{suppliers.find((s) => s.id === selectedSupplierId)?.name}</strong>
-                </p>
-              )}
-
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">Costo del proveedor (opcional)</label>
-                <input type="number" value={supplierCost} onChange={(e) => setSupplierCost(e.target.value)}
-                  placeholder="0"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => { setShowSupplierModal(false); setSelectedSupplierId(null); setSupplierSearch(''); setSupplierCost('') }}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-                  Cancelar
-                </button>
-                <button type="button" disabled={!selectedSupplierId}
-                  onClick={() => assignSupplierToItems(
-                    Array.from(selectedIds), selectedSupplierId!,
-                    supplierCost ? Number(supplierCost) : null
-                  )}
-                  className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors">
-                  Asignar
-                </button>
-              </div>
             </div>
           </div>
+        )}
+
+        {/* Info cards */}
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Información del contrato</h2>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Tipo</dt>
+                <dd className="text-gray-900 font-medium">{CONTRACT_TYPE_ICONS[contract.type]} {CONTRACT_TYPE_LABELS[contract.type]}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Entidad</dt>
+                <dd className="text-gray-900">{contract.entity}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Empresa</dt>
+                <dd className="text-gray-900">{contract.organizations?.name ?? '—'}</dd>
+              </div>
+            </dl>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Equipo</h2>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Creado por</dt>
+                <dd className="text-gray-900">{contract.created_by_profile?.name ?? '—'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Responsable</dt>
+                <dd className="text-gray-900">{contract.assigned_to_profile?.name ?? '—'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Creado</dt>
+                <dd className="text-gray-500">{new Date(contract.created_at).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })}</dd>
+              </div>
+            </dl>
+          </div>
         </div>
+
+        {/* Batch toolbar */}
+        {selected.size > 0 && (
+          <div className="mb-4 bg-gray-900 text-white rounded-xl px-5 py-3 flex items-center justify-between">
+            <span className="text-sm font-medium">{selected.size} ítem{selected.size > 1 ? 's' : ''} seleccionado{selected.size > 1 ? 's' : ''}</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => { setBatchModal('supplier'); setBatchSupplier(''); setBatchSupplierCost(''); setSupplierSearch('') }}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">
+                Asignar proveedor
+              </button>
+              <button onClick={() => { setBatchModal('status'); setBatchStatus('') }}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">
+                Cambiar estado
+              </button>
+              <button onClick={() => { setBatchModal('assign'); setBatchAssign('') }}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">
+                Asignar a
+              </button>
+              <button onClick={() => setSelected(new Set())}
+                className="px-3 py-1.5 hover:bg-white/20 rounded-lg text-sm transition-colors ml-2">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Items grouped by supplier */}
+        <div className="bg-white border border-gray-200 rounded-xl">
+          <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">
+              Ítems <span className="ml-1 text-sm font-normal text-gray-400">({items.length})</span>
+            </h2>
+            {items.length > 0 && (
+              <label className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer">
+                <input type="checkbox" checked={selected.size === items.length && items.length > 0}
+                  onChange={toggleSelectAll} className="rounded border-gray-300" />
+                Seleccionar todos
+              </label>
+            )}
+          </div>
+
+          {items.length === 0 ? (
+            <div className="px-5 py-10 text-center text-gray-400">
+              <p>No hay ítems en este contrato.</p>
+              <p className="text-sm mt-1">Los ítems se agregan al crear el contrato con Excel.</p>
+            </div>
+          ) : (
+            <div>
+              {grouped.map(([key, group]) => (
+                <div key={key}>
+                  {/* Supplier group header */}
+                  <div className="px-5 py-2.5 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-700">
+                      {key === '__unassigned__' ? '📋 Sin proveedor asignado' : `🏪 ${group.supplier?.name}`}
+                    </span>
+                    <span className="text-xs text-gray-400">({group.items.length})</span>
+                  </div>
+
+                  {/* Items table */}
+                  <table className="w-full text-sm">
+                    <tbody className="divide-y divide-gray-100">
+                      {group.items.map(item => {
+                        const m = marginPct(item.sale_price, item.supplier_cost)
+                        return (
+                          <tr key={item.id}
+                            className={`hover:bg-gray-50 transition-colors cursor-pointer ${selected.has(item.id) ? 'bg-blue-50/50' : ''}`}
+                            onClick={() => setSideItem(item)}>
+                            <td className="pl-5 py-3 w-10" onClick={e => e.stopPropagation()}>
+                              <input type="checkbox" checked={selected.has(item.id)}
+                                onChange={() => toggleSelect(item.id)} className="rounded border-gray-300" />
+                            </td>
+                            <td className="py-3 w-12 text-gray-400 text-xs">
+                              {item.item_number ?? '—'}
+                            </td>
+                            <td className="py-3 pr-4">
+                              <div className="font-medium text-gray-900">{item.short_name}</div>
+                              <div className="text-xs text-gray-400">{item.quantity} {item.unit || 'und'}</div>
+                            </td>
+                            <td className="py-3 pr-4">
+                              <div className="flex gap-1.5">
+                                <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_COLORS[item.status] || STATUS_COLORS.pending}`}>
+                                  {STATUS_LABELS[item.status] || item.status}
+                                </span>
+                                <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${PAYMENT_COLORS[item.payment_status]}`}>
+                                  {PAYMENT_LABELS[item.payment_status]}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 pr-4 text-gray-500 text-xs">
+                              {item.profiles?.name ?? '—'}
+                            </td>
+                            <td className="py-3 pr-5 text-right">
+                              {m != null && (
+                                <span className={`text-xs ${marginColor(m)}`}>
+                                  {m.toFixed(0)}%
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Recent activity */}
+        {activityLogInit.length > 0 && (
+          <div className="mt-6 bg-white border border-gray-200 rounded-xl">
+            <div className="px-5 py-4 border-b border-gray-200">
+              <h2 className="font-semibold text-gray-900">Actividad reciente</h2>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {activityLogInit.slice(0, 10).map(entry => (
+                <div key={entry.id} className="px-5 py-3 flex items-center justify-between text-sm">
+                  <div>
+                    <span className="text-gray-700 font-medium">
+                      {ACTION_LABELS[entry.action] || entry.action}
+                    </span>
+                    {entry.details && Object.keys(entry.details).length > 0 && (
+                      <span className="text-gray-400 ml-2">
+                        {entry.details.new_value ? `→ ${entry.details.new_value as string}` : ''}
+                        {entry.details.supplier ? `→ ${entry.details.supplier as string}` : ''}
+                        {entry.details.assigned_to ? `→ ${entry.details.assigned_to as string}` : ''}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs text-gray-400">
+                    {new Date(entry.created_at).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Side panel */}
+      {sideItem && (
+        <SidePanel
+          item={sideItem}
+          contract={contract}
+          suppliers={suppliers}
+          profiles={profiles}
+          categories={categories}
+          recentSuppliers={recentSuppliers}
+          loading={loading}
+          onClose={() => setSideItem(null)}
+          onUpdateField={updateItemField}
+          onSaveDetails={saveSideItemDetails}
+          activityLog={activityLogInit.filter(a => a.entity_id === sideItem.id).slice(0, 5)}
+        />
+      )}
+
+      {/* Batch modal: Assign supplier */}
+      {batchModal === 'supplier' && (
+        <Modal title="Asignar proveedor" onClose={() => setBatchModal(null)}>
+          {recentSuppliers.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Recientes en este contrato</p>
+              <div className="flex flex-wrap gap-2">
+                {recentSuppliers.map(s => (
+                  <button key={s.id} onClick={() => setBatchSupplier(s.id)}
+                    className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${batchSupplier === s.id ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="mb-3">
+            <input type="text" placeholder="Buscar proveedor..." value={supplierSearch}
+              onChange={e => setSupplierSearch(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+          </div>
+          <div className="max-h-40 overflow-y-auto mb-4 space-y-1">
+            {filteredSuppliers.map(s => (
+              <button key={s.id} onClick={() => setBatchSupplier(s.id)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${batchSupplier === s.id ? 'bg-gray-900 text-white' : 'hover:bg-gray-50 text-gray-700'}`}>
+                {s.name} {s.city && <span className="text-gray-400">· {s.city}</span>} {s.trusted && <span className="text-green-500 ml-1">✓</span>}
+              </button>
+            ))}
+            {filteredSuppliers.length === 0 && <p className="text-sm text-gray-400 text-center py-2">Sin resultados</p>}
+          </div>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Costo proveedor (opcional)</label>
+            <input type="number" value={batchSupplierCost} onChange={e => setBatchSupplierCost(e.target.value)}
+              placeholder="0" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => setBatchModal(null)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Cancelar</button>
+            <button onClick={handleBatchSupplier} disabled={!batchSupplier || loading}
+              className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50">
+              {loading ? 'Guardando...' : 'Asignar'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Batch modal: Change status */}
+      {batchModal === 'status' && (
+        <Modal title="Cambiar estado" onClose={() => setBatchModal(null)}>
+          <div className="space-y-2 mb-4">
+            {validStatuses.map(s => (
+              <button key={s} onClick={() => setBatchStatus(s)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${batchStatus === s ? 'bg-gray-900 text-white' : 'hover:bg-gray-50 text-gray-700'}`}>
+                <span className={`inline-block w-2 h-2 rounded-full mr-2 ${(STATUS_COLORS[s] || '').split(' ')[0]?.replace('bg-', 'bg-') || 'bg-gray-300'}`} />
+                {STATUS_LABELS[s] || s}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => setBatchModal(null)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Cancelar</button>
+            <button onClick={handleBatchStatus} disabled={!batchStatus || loading}
+              className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50">
+              {loading ? 'Guardando...' : 'Cambiar'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Batch modal: Assign user */}
+      {batchModal === 'assign' && (
+        <Modal title="Asignar responsable" onClose={() => setBatchModal(null)}>
+          <div className="space-y-2 mb-4">
+            {profiles.map(p => (
+              <button key={p.id} onClick={() => setBatchAssign(p.id)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${batchAssign === p.id ? 'bg-gray-900 text-white' : 'hover:bg-gray-50 text-gray-700'}`}>
+                {p.name} <span className="text-gray-400">· {p.role}</span>
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => setBatchModal(null)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Cancelar</button>
+            <button onClick={handleBatchAssign} disabled={!batchAssign || loading}
+              className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50">
+              {loading ? 'Guardando...' : 'Asignar'}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* Edit contract modal */}
-      {showEditModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-            <div className="p-6 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Editar contrato</h2>
+      {showEditContract && (
+        <Modal title="Editar contrato" onClose={() => setShowEditContract(false)}>
+          <form onSubmit={handleEditContract} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre del contrato</label>
+              <input type="text" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
             </div>
-            <form onSubmit={handleEdit} className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-                <input type="text" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Entidad contratante</label>
-                <input type="text" value={editForm.entity} onChange={(e) => setEditForm({ ...editForm, entity: e.target.value })} required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
-                <select value={editForm.type} onChange={(e) => setEditForm({ ...editForm, type: e.target.value as typeof editForm.type })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
-                  <option value="purchase">Compras</option>
-                  <option value="logistics">Logistica</option>
-                  <option value="service">Servicios</option>
-                  <option value="mixed">Mixto</option>
-                </select>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowEditModal(false)}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-                  Cancelar
-                </button>
-                <button type="submit" disabled={loading}
-                  className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors">
-                  {loading ? 'Guardando...' : 'Guardar'}
-                </button>
-              </div>
-            </form>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Entidad contratante</label>
+              <input type="text" value={editForm.entity} onChange={e => setEditForm({ ...editForm, entity: e.target.value })} required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+              <select value={editForm.type} onChange={e => setEditForm({ ...editForm, type: e.target.value as typeof editForm.type })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+                <option value="purchase">Compras</option>
+                <option value="logistics">Logística</option>
+                <option value="service">Servicios</option>
+                <option value="mixed">Mixto</option>
+              </select>
+            </div>
+            {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => setShowEditContract(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">Cancelar</button>
+              <button type="submit" disabled={loading}
+                className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors">
+                {loading ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── Modal wrapper ──────────────────────────────────────────────
+function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="p-6 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        </div>
+        <div className="p-6">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+// ── Side panel ─────────────────────────────────────────────────
+function SidePanel({
+  item, contract, suppliers, profiles, categories, recentSuppliers, loading,
+  onClose, onUpdateField, onSaveDetails, activityLog,
+}: {
+  item: Item
+  contract: Contract
+  suppliers: AvailableSupplier[]
+  profiles: Profile[]
+  categories: Category[]
+  recentSuppliers: { id: string; name: string }[]
+  loading: boolean
+  onClose: () => void
+  onUpdateField: (itemId: string, field: string, value: unknown, label?: string) => void
+  onSaveDetails: (itemId: string, data: Record<string, unknown>) => void
+  activityLog: ActivityEntry[]
+}) {
+  const [editNotes, setEditNotes] = useState(item.notes)
+  const [editDescription, setEditDescription] = useState(item.description)
+  const [editPhone, setEditPhone] = useState(item.contact_phone || '')
+  const [editSupplierCost, setEditSupplierCost] = useState(item.supplier_cost?.toString() || '')
+  const [editSalePrice, setEditSalePrice] = useState(item.sale_price?.toString() || '')
+  const [dirty, setDirty] = useState(false)
+
+  // Reset when item changes
+  const [lastItemId, setLastItemId] = useState(item.id)
+  if (item.id !== lastItemId) {
+    setLastItemId(item.id)
+    setEditNotes(item.notes)
+    setEditDescription(item.description)
+    setEditPhone(item.contact_phone || '')
+    setEditSupplierCost(item.supplier_cost?.toString() || '')
+    setEditSalePrice(item.sale_price?.toString() || '')
+    setDirty(false)
+  }
+
+  function markDirty() { setDirty(true) }
+
+  function handleSave() {
+    const data: Record<string, unknown> = {}
+    if (editDescription !== item.description) data.description = editDescription
+    if (editNotes !== item.notes) data.notes = editNotes
+    if (editPhone !== (item.contact_phone || '')) data.contact_phone = editPhone || null
+    if (editSupplierCost !== (item.supplier_cost?.toString() || '')) data.supplier_cost = editSupplierCost ? parseFloat(editSupplierCost) : null
+    if (editSalePrice !== (item.sale_price?.toString() || '')) data.sale_price = editSalePrice ? parseFloat(editSalePrice) : null
+    if (Object.keys(data).length > 0) {
+      onSaveDetails(item.id, data)
+      setDirty(false)
+    }
+  }
+
+  const statusFlow = STATUS_FLOWS[item.type] || STATUS_FLOWS.service
+  const paymentFlow = ['unpaid', 'invoiced', 'paid']
+
+  const whatsappPhone = item.contact_phone || item.suppliers?.whatsapp
+  const waUrl = buildWhatsAppUrl(whatsappPhone || null, item, contract)
+
+  const m = marginPct(
+    editSalePrice ? parseFloat(editSalePrice) : item.sale_price,
+    editSupplierCost ? parseFloat(editSupplierCost) : item.supplier_cost
+  )
+
+  return (
+    <div className="fixed top-0 right-0 w-[420px] h-full bg-white border-l border-gray-200 shadow-lg z-40 overflow-y-auto">
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
+        <div>
+          <h3 className="font-semibold text-gray-900">{item.short_name}</h3>
+          <p className="text-xs text-gray-400">#{item.item_number ?? '—'} · {item.quantity} {item.unit || 'und'}</p>
+        </div>
+        <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-400 hover:text-gray-600">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+
+      <div className="p-5 space-y-5">
+        {/* Status buttons */}
+        <div>
+          <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">Estado logístico</label>
+          <div className="flex flex-wrap gap-1.5">
+            {statusFlow.map(s => (
+              <button key={s} onClick={() => onUpdateField(item.id, 'status', s, STATUS_LABELS[s])}
+                disabled={loading}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${item.status === s ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                {STATUS_LABELS[s]}
+              </button>
+            ))}
           </div>
         </div>
-      )}
+
+        {/* Payment status buttons */}
+        <div>
+          <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">Estado de pago</label>
+          <div className="flex gap-1.5">
+            {paymentFlow.map(s => (
+              <button key={s} onClick={() => onUpdateField(item.id, 'payment_status', s, PAYMENT_LABELS[s])}
+                disabled={loading}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${item.payment_status === s ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                {PAYMENT_LABELS[s]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Supplier */}
+        <div>
+          <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">Proveedor</label>
+          {recentSuppliers.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {recentSuppliers.map(s => (
+                <button key={s.id} onClick={() => onUpdateField(item.id, 'supplier_id', s.id, s.name)}
+                  className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${item.supplier_id === s.id ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <select value={item.supplier_id || ''} onChange={e => {
+            const sup = suppliers.find(s => s.id === e.target.value)
+            onUpdateField(item.id, 'supplier_id', e.target.value || null, sup?.name)
+          }}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+            <option value="">Sin proveedor</option>
+            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {s.city && `(${s.city})`}</option>)}
+          </select>
+        </div>
+
+        {/* Assigned to */}
+        <div>
+          <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">Responsable</label>
+          <select value={item.assigned_to || ''} onChange={e => {
+            const prof = profiles.find(p => p.id === e.target.value)
+            onUpdateField(item.id, 'assigned_to', e.target.value || null, prof?.name)
+          }}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+            <option value="">Sin asignar</option>
+            {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+
+        {/* Category */}
+        <div>
+          <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">Categoría</label>
+          <select value={item.category_id || ''} onChange={e => {
+            const cat = categories.find(c => c.id === e.target.value)
+            onUpdateField(item.id, 'category_id', e.target.value || null, cat?.name)
+          }}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+            <option value="">Sin categoría</option>
+            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+
+        {/* Prices / margin */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Precio venta</label>
+            <input type="number" value={editSalePrice} onChange={e => { setEditSalePrice(e.target.value); markDirty() }}
+              placeholder="0" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Costo proveedor</label>
+            <input type="number" value={editSupplierCost} onChange={e => { setEditSupplierCost(e.target.value); markDirty() }}
+              placeholder="0" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+          </div>
+        </div>
+        {m != null && (
+          <div className={`text-sm ${marginColor(m)}`}>
+            Margen: {m.toFixed(1)}% ({formatCurrency((parseFloat(editSalePrice) || 0) - (parseFloat(editSupplierCost) || 0))})
+          </div>
+        )}
+
+        {/* Description */}
+        <div>
+          <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Descripción</label>
+          <textarea value={editDescription} onChange={e => { setEditDescription(e.target.value); markDirty() }}
+            rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none" />
+        </div>
+
+        {/* Phone */}
+        <div>
+          <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Teléfono contacto</label>
+          <input type="text" value={editPhone} onChange={e => { setEditPhone(e.target.value); markDirty() }}
+            placeholder="573001234567" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+        </div>
+
+        {/* Notes */}
+        <div>
+          <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Notas</label>
+          <textarea value={editNotes} onChange={e => { setEditNotes(e.target.value); markDirty() }}
+            rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none" />
+        </div>
+
+        {/* Save button */}
+        {dirty && (
+          <button onClick={handleSave} disabled={loading}
+            className="w-full bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors">
+            {loading ? 'Guardando...' : 'Guardar cambios'}
+          </button>
+        )}
+
+        {/* WhatsApp */}
+        {waUrl && (
+          <a href={waUrl} target="_blank" rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+            Contactar por WhatsApp
+          </a>
+        )}
+
+        {/* Activity for this item */}
+        {activityLog.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">Historial reciente</label>
+            <div className="space-y-2">
+              {activityLog.map(entry => (
+                <div key={entry.id} className="text-xs text-gray-500 flex justify-between">
+                  <span>{ACTION_LABELS[entry.action] || entry.action}</span>
+                  <span>{new Date(entry.created_at).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

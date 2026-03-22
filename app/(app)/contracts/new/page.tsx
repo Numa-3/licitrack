@@ -1,8 +1,37 @@
-export default function NewContractPage() {
+import { createServerSupabaseClient } from '@/lib/supabase/server'
+import NewContractForm from '@/components/features/NewContractForm'
+
+export default async function NewContractPage() {
+  const supabase = await createServerSupabaseClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  // Obtener organizaciones (organizations no tiene deleted_at)
+  const { data: organizations } = await supabase
+    .from('organizations')
+    .select('id, name')
+    .order('name')
+
+  // Obtener perfiles (para asignar responsable)
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, name, role')
+    .order('name')
+
+  // Obtener categorías
+  const { data: categories } = await supabase
+    .from('categories')
+    .select('id, name, type')
+    .order('name')
+
   return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold text-gray-900">Nuevo Contrato</h1>
-      <p className="text-gray-500 mt-2">Crear contrato y subir Excel de la ficha técnica.</p>
-    </div>
+    <NewContractForm
+      organizations={organizations || []}
+      profiles={profiles || []}
+      categories={categories || []}
+      currentUserId={user?.id || ''}
+    />
   )
 }
