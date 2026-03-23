@@ -32,12 +32,14 @@ export default async function ContractDetailPage({
       id,
       name,
       entity,
+      entity_id,
       type,
       status,
       created_at,
       updated_at,
       organization_id,
       organizations ( name ),
+      contracting_entities!contracts_entity_id_fkey ( id, name ),
       created_by_profile:profiles!contracts_created_by_fkey ( name ),
       assigned_to_profile:profiles!contracts_assigned_to_fkey ( name )
     `)
@@ -82,6 +84,13 @@ export default async function ContractDetailPage({
     .select('id, name, type')
     .order('name')
 
+  // Obtener entidades contratantes (para dropdown de edición)
+  const { data: allEntities } = await supabase
+    .from('contracting_entities')
+    .select('id, name')
+    .is('deleted_at', null)
+    .order('name')
+
   // Obtener actividad reciente del contrato (últimos 20)
   const { data: activityLog } = await supabase
     .from('activity_log')
@@ -99,6 +108,7 @@ export default async function ContractDetailPage({
       suppliers={suppliers || []}
       profiles={profiles || []}
       categories={categories || []}
+      entities={allEntities || []}
       activityLog={(activityLog || []) as any}
       userRole={userRole}
       currentUserId={user?.id || ''}

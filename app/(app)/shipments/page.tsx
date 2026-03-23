@@ -8,6 +8,17 @@ export default async function ShipmentsPage() {
     data: { user },
   } = await supabase.auth.getUser()
 
+  // Obtener rol del usuario
+  let userRole = 'operadora'
+  if (user) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+    if (profile) userRole = profile.role
+  }
+
   // Obtener envíos con contrato e ítems
   const { data: shipments } = await supabase
     .from('shipments')
@@ -32,6 +43,7 @@ export default async function ShipmentsPage() {
       shipments={(shipments || []) as any}
       contracts={contracts || []}
       currentUserId={user?.id || ''}
+      userRole={userRole}
     />
   )
 }

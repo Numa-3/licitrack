@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import DeleteButton from '@/components/ui/DeleteButton'
 
 // ── Types ──────────────────────────────────────────────────────
 type InvoiceItem = {
@@ -40,6 +41,7 @@ type Props = {
   suppliers: Supplier[]
   items: ItemOption[]
   currentUserId: string
+  userRole: string
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -53,7 +55,7 @@ function formatDate(d: string): string {
 }
 
 // ── Component ──────────────────────────────────────────────────
-export default function InvoicesClient({ invoices: initialInvoices, contracts, suppliers, items, currentUserId }: Props) {
+export default function InvoicesClient({ invoices: initialInvoices, contracts, suppliers, items, currentUserId, userRole }: Props) {
   const router = useRouter()
   const supabase = createClient()
 
@@ -261,6 +263,7 @@ export default function InvoicesClient({ invoices: initialInvoices, contracts, s
                 <th className="text-right px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Total</th>
                 <th className="text-center px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Ítems</th>
                 <th className="text-center px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Archivos</th>
+                {userRole === 'jefe' && <th className="text-center px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider"></th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -292,6 +295,15 @@ export default function InvoicesClient({ invoices: initialInvoices, contracts, s
                       )}
                     </div>
                   </td>
+                  {userRole === 'jefe' && (
+                    <td className="px-5 py-3 text-center">
+                      <DeleteButton
+                        apiPath={`/api/admin/invoices/${inv.id}`}
+                        entityLabel="esta factura"
+                        buttonLabel="Eliminar"
+                      />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

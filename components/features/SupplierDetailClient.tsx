@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import DeleteButton from '@/components/ui/DeleteButton'
 
 // ── Types ──────────────────────────────────────────────────────
 type SupplierDoc = {
@@ -300,6 +301,13 @@ export default function SupplierDetailClient({ supplier: initial, documents: ini
               className="px-4 py-2 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors">
               Archivar
             </button>
+          )}
+          {userRole === 'jefe' && (
+            <DeleteButton
+              apiPath={`/api/admin/suppliers/${supplier.id}`}
+              entityLabel="este proveedor"
+              redirectTo="/suppliers"
+            />
           )}
         </div>
       </div>

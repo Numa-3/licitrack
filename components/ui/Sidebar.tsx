@@ -12,6 +12,7 @@ const navItems = [
   { href: '/activity', label: 'Actividad', icon: '📋' },
   { href: '/organizations', label: 'Mis Empresas', icon: '🏢' },
   { href: '/suppliers', label: 'Proveedores', icon: '🤝' },
+  { href: '/entities', label: 'Entidades', icon: '🏛️' },
   { href: '/invoices', label: 'Facturas', icon: '🧾' },
 ]
 
@@ -85,6 +86,20 @@ function SidebarContent({ profile, pathname, onNavigate }: {
             </Link>
           )
         })}
+        {profile?.role === 'jefe' && (
+          <Link
+            href="/admin"
+            onClick={onNavigate}
+            className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+              pathname === '/admin'
+                ? 'bg-gray-100 text-gray-900 font-medium'
+                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+            }`}
+          >
+            <span>{'⚙️'}</span>
+            <span>Administracion</span>
+          </Link>
+        )}
       </nav>
 
       {/* Perfil y logout */}

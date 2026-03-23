@@ -8,6 +8,17 @@ export default async function InvoicesPage() {
     data: { user },
   } = await supabase.auth.getUser()
 
+  // Obtener rol del usuario
+  let userRole = 'operadora'
+  if (user) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+    if (profile) userRole = profile.role
+  }
+
   // Obtener facturas con joins
   const { data: invoices } = await supabase
     .from('invoices')
@@ -50,6 +61,7 @@ export default async function InvoicesPage() {
       suppliers={suppliers || []}
       items={items || []}
       currentUserId={user?.id || ''}
+      userRole={userRole}
     />
   )
 }

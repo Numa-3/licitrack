@@ -10,10 +10,13 @@ type Organization = { id: string; name: string }
 type Profile = { id: string; name: string; role: string }
 type Category = { id: string; name: string; type: string }
 
+type ContractingEntity = { id: string; name: string }
+
 type Props = {
   organizations: Organization[]
   profiles: Profile[]
   categories: Category[]
+  entities: ContractingEntity[]
   currentUserId: string
 }
 
@@ -148,7 +151,7 @@ function parseNumeric(val: unknown): number {
 // ── Steps ──────────────────────────────────────────────────────
 type Step = 'form' | 'upload' | 'mapping' | 'review'
 
-export default function NewContractForm({ organizations, profiles, categories, currentUserId }: Props) {
+export default function NewContractForm({ organizations, profiles, categories, entities, currentUserId }: Props) {
   const router = useRouter()
   const supabase = createClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -159,7 +162,7 @@ export default function NewContractForm({ organizations, profiles, categories, c
   // Step 1: Contract form
   const [form, setForm] = useState({
     name: '',
-    entity: '',
+    entity_id: '',
     organization_id: '',
     type: '',
     assigned_to: currentUserId,
@@ -196,17 +199,21 @@ export default function NewContractForm({ organizations, profiles, categories, c
   // ── Step 1: Create contract ────────────────────────────────
   async function handleCreateContract(e: React.FormEvent) {
     e.preventDefault()
+    if (!form.entity_id) { setError('Seleccioná una entidad contratante.'); return }
     if (!form.type) { setError('Seleccioná el tipo de contrato.'); return }
     if (!form.organization_id) { setError('Seleccioná una empresa.'); return }
 
     setLoading(true)
     setError(null)
 
+    const entityName = entities.find(e => e.id === form.entity_id)?.name || ''
+
     const { data, error } = await supabase
       .from('contracts')
       .insert({
         name: form.name,
-        entity: form.entity,
+        entity: entityName,
+        entity_id: form.entity_id,
         organization_id: form.organization_id,
         type: form.type,
         status: 'draft',
@@ -525,14 +532,28 @@ export default function NewContractForm({ organizations, profiles, categories, c
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Entidad contratante
               </label>
-              <input
-                type="text"
-                value={form.entity}
-                onChange={(e) => setForm({ ...form, entity: e.target.value })}
-                required
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
-                placeholder="Ej: ANLA, Gobernación del Amazonas"
-              />
+              {entities.length === 0 ? (
+                <p className="text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+                  No hay entidades registradas.{' '}
+                  <a href="/entities" className="underline font-medium">
+                    Creá una primero.
+                  </a>
+                </p>
+              ) : (
+                <select
+                  value={form.entity_id}
+                  onChange={(e) => setForm({ ...form, entity_id: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+                >
+                  <option value="">Seleccioná una entidad...</option>
+                  {entities.map((ent) => (
+                    <option key={ent.id} value={ent.id}>
+                      {ent.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div>

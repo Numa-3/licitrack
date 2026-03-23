@@ -31,6 +31,23 @@ CREATE TABLE organizations (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- contracting_entities (entidades contratantes: SENA, Gobernación, ICBF, etc.)
+-- Definida antes de contracts porque contracts tiene FK a esta tabla
+CREATE TABLE contracting_entities (
+  id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name         TEXT NOT NULL,
+  nit          TEXT NOT NULL DEFAULT '',
+  address      TEXT NOT NULL DEFAULT '',
+  city         TEXT NOT NULL DEFAULT '',
+  contact_name TEXT NOT NULL DEFAULT '',
+  phone        TEXT NOT NULL DEFAULT '',
+  email        TEXT NOT NULL DEFAULT '',
+  notes        TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at   TIMESTAMPTZ
+);
+
 -- contracts (contratos de licitación)
 CREATE TABLE contracts (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -40,6 +57,7 @@ CREATE TABLE contracts (
   type            TEXT NOT NULL CHECK (type IN ('purchase', 'logistics', 'service', 'mixed')),
   status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'completed', 'cancelled')),
   created_by      UUID NOT NULL REFERENCES profiles(id),
+  entity_id       UUID REFERENCES contracting_entities(id),
   assigned_to     UUID REFERENCES profiles(id),
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -96,6 +114,20 @@ CREATE TABLE items (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at     TIMESTAMPTZ
+);
+
+-- entity_documents (documentos legales de entidades contratantes)
+CREATE TABLE entity_documents (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  entity_id   UUID NOT NULL REFERENCES contracting_entities(id) ON DELETE CASCADE,
+  type        TEXT NOT NULL CHECK (type IN ('rut', 'chamber_cert', 'other')),
+  file_url    TEXT NOT NULL,
+  verified    BOOLEAN NOT NULL DEFAULT false,
+  verified_by UUID REFERENCES profiles(id),
+  expires_at  DATE,
+  notes       TEXT,
+  uploaded_by UUID NOT NULL REFERENCES profiles(id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- supplier_documents (documentos legales de proveedores)
@@ -191,6 +223,10 @@ CREATE TRIGGER contracts_updated_at
   BEFORE UPDATE ON contracts
   FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
+CREATE TRIGGER contracting_entities_updated_at
+  BEFORE UPDATE ON contracting_entities
+  FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
 -- Trigger para crear perfil automáticamente al registrar usuario en auth.users
 -- El rol se pasa como metadata al crear el usuario (raw_user_meta_data->>'role')
 -- Si no se pasa, el rol por defecto es 'operadora'
@@ -247,6 +283,8 @@ ALTER TABLE organizations     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contracts         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE categories        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE items             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contracting_entities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE entity_documents     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE suppliers         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE supplier_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE shipments         ENABLE ROW LEVEL SECURITY;
@@ -307,6 +345,34 @@ CREATE POLICY "categorías: actualizar (jefe)" ON categories
   FOR UPDATE USING (get_my_role() = 'jefe');
 
 CREATE POLICY "categorías: eliminar (jefe)" ON categories
+  FOR DELETE USING (get_my_role() = 'jefe');
+
+
+-- ── contracting_entities ─────────────────────────────────
+CREATE POLICY "entidades: leer" ON contracting_entities
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "entidades: insertar (jefe)" ON contracting_entities
+  FOR INSERT WITH CHECK (get_my_role() = 'jefe');
+
+CREATE POLICY "entidades: actualizar (jefe)" ON contracting_entities
+  FOR UPDATE USING (get_my_role() = 'jefe');
+
+CREATE POLICY "entidades: eliminar (jefe)" ON contracting_entities
+  FOR DELETE USING (get_my_role() = 'jefe');
+
+
+-- ── entity_documents ────────────────────────────────────
+CREATE POLICY "docs entidad: leer" ON entity_documents
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "docs entidad: insertar" ON entity_documents
+  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
+CREATE POLICY "docs entidad: actualizar (jefe)" ON entity_documents
+  FOR UPDATE USING (get_my_role() = 'jefe');
+
+CREATE POLICY "docs entidad: eliminar (jefe)" ON entity_documents
   FOR DELETE USING (get_my_role() = 'jefe');
 
 
@@ -436,4 +502,5 @@ CREATE POLICY "actividad: leer (jefe)" ON activity_log
 --   - documents       → RUT y Cámara de Comercio de organizaciones
 --   - invoices        → facturas electrónicas (PDF + XML)
 --   - supplier-documents → documentos de proveedores
+--   - entity-documents   → documentos de entidades contratantes
 -- ============================================================

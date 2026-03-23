@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import DeleteButton from '@/components/ui/DeleteButton'
 
 // ── Types ──────────────────────────────────────────────────────
 type ShipmentItem = {
@@ -37,6 +38,7 @@ type Props = {
   shipments: Shipment[]
   contracts: Contract[]
   currentUserId: string
+  userRole: string
 }
 
 // ── Constants ──────────────────────────────────────────────────
@@ -59,7 +61,7 @@ function formatDate(d: string): string {
 }
 
 // ── Component ──────────────────────────────────────────────────
-export default function ShipmentsClient({ shipments: initialShipments, contracts, currentUserId }: Props) {
+export default function ShipmentsClient({ shipments: initialShipments, contracts, currentUserId, userRole }: Props) {
   const router = useRouter()
   const supabase = createClient()
 
@@ -209,12 +211,18 @@ export default function ShipmentsClient({ shipments: initialShipments, contracts
                     )}
                   </div>
 
-                  <div className="ml-4">
+                  <div className="ml-4 flex items-center gap-2">
                     {!shipment.actual_arrival && (
                       <button onClick={() => { setReceiveModal(shipment); setArrivalDate(new Date().toISOString().split('T')[0]) }}
                         className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors whitespace-nowrap">
                         Marcar recibido
                       </button>
+                    )}
+                    {userRole === 'jefe' && (
+                      <DeleteButton
+                        apiPath={`/api/admin/shipments/${shipment.id}`}
+                        entityLabel="este envío"
+                      />
                     )}
                   </div>
                 </div>

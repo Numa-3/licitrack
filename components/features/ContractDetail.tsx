@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import DeleteButton from '@/components/ui/DeleteButton'
 
 // ── Types ──────────────────────────────────────────────────────
 type Supplier = { id: string; name: string; whatsapp: string | null }
@@ -39,15 +40,19 @@ type Contract = {
   id: string
   name: string
   entity: string
+  entity_id: string | null
   type: 'purchase' | 'logistics' | 'service' | 'mixed'
   status: 'draft' | 'active' | 'completed' | 'cancelled'
   created_at: string
   updated_at: string
   organization_id: string
   organizations: { name: string } | null
+  contracting_entities: { id: string; name: string } | null
   created_by_profile: { name: string } | null
   assigned_to_profile: { name: string } | null
 }
+
+type ContractingEntity = { id: string; name: string }
 
 type AvailableSupplier = { id: string; name: string; whatsapp: string | null; city: string; trusted: boolean }
 
@@ -67,6 +72,7 @@ type Props = {
   suppliers: AvailableSupplier[]
   profiles: Profile[]
   categories: Category[]
+  entities: ContractingEntity[]
   activityLog: ActivityEntry[]
   userRole: string
   currentUserId: string
@@ -162,7 +168,7 @@ function buildWhatsAppUrl(phone: string | null, item: Item, contract: Contract):
 // ── Component ──────────────────────────────────────────────────
 export default function ContractDetail({
   contract: initialContract, items: initialItems, suppliers: suppliersRaw, profiles: profilesRaw, categories: categoriesRaw,
-  activityLog: activityLogRaw, userRole, currentUserId,
+  entities: entitiesRaw, activityLog: activityLogRaw, userRole, currentUserId,
 }: Props) {
   const router = useRouter()
   const supabase = createClient()
@@ -171,6 +177,7 @@ export default function ContractDetail({
   const suppliers = suppliersRaw || []
   const profiles = profilesRaw || []
   const categories = categoriesRaw || []
+  const entities = entitiesRaw || []
   const activityLogInit = activityLogRaw || []
 
   // ── State ────────────────────────────────────────────
@@ -179,7 +186,7 @@ export default function ContractDetail({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [sideItem, setSideItem] = useState<Item | null>(null)
   const [showEditContract, setShowEditContract] = useState(false)
-  const [editForm, setEditForm] = useState({ name: initialContract.name, entity: initialContract.entity, type: initialContract.type })
+  const [editForm, setEditForm] = useState({ name: initialContract.name, entity_id: initialContract.entity_id || '', type: initialContract.type })
 
   // Shipment modal
   const [showShipmentModal, setShowShipmentModal] = useState(false)
@@ -505,13 +512,16 @@ export default function ContractDetail({
     setLoading(true)
     setError(null)
 
+    const entityName = entities.find(e => e.id === editForm.entity_id)?.name || ''
+
     const { data, error: err } = await supabase
       .from('contracts')
-      .update({ name: editForm.name, entity: editForm.entity, type: editForm.type })
+      .update({ name: editForm.name, entity: entityName, entity_id: editForm.entity_id || null, type: editForm.type })
       .eq('id', contract.id)
       .select(`
-        id, name, entity, type, status, created_at, updated_at, organization_id,
+        id, name, entity, entity_id, type, status, created_at, updated_at, organization_id,
         organizations ( name ),
+        contracting_entities!contracts_entity_id_fkey ( id, name ),
         created_by_profile:profiles!contracts_created_by_fkey ( name ),
         assigned_to_profile:profiles!contracts_assigned_to_fkey ( name )
       `)
@@ -625,13 +635,13 @@ export default function ContractDetail({
               </span>
             </div>
             <p className="text-gray-500 text-sm">
-              {contract.entity} · {contract.organizations?.name ?? '—'}
+              {contract.contracting_entities?.name ?? contract.entity} · {contract.organizations?.name ?? '—'}
             </p>
           </div>
 
           {isJefe && (
             <div className="flex items-center gap-2">
-              <button onClick={() => { setEditForm({ name: contract.name, entity: contract.entity, type: contract.type }); setError(null); setShowEditContract(true) }}
+              <button onClick={() => { setEditForm({ name: contract.name, entity_id: contract.entity_id || '', type: contract.type }); setError(null); setShowEditContract(true) }}
                 className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
                 Editar
               </button>
@@ -647,6 +657,11 @@ export default function ContractDetail({
                   Archivar
                 </button>
               )}
+              <DeleteButton
+                apiPath={`/api/admin/contracts/${contract.id}`}
+                entityLabel="este contrato"
+                redirectTo="/dashboard"
+              />
             </div>
           )}
         </div>
@@ -1071,8 +1086,13 @@ export default function ContractDetail({
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Entidad contratante</label>
-              <input type="text" value={editForm.entity} onChange={e => setEditForm({ ...editForm, entity: e.target.value })} required
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              <select value={editForm.entity_id} onChange={e => setEditForm({ ...editForm, entity_id: e.target.value })} required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+                <option value="">Seleccioná una entidad...</option>
+                {entities.map(ent => (
+                  <option key={ent.id} value={ent.id}>{ent.name}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>

@@ -26,11 +26,19 @@ export default async function NewContractPage() {
     .select('id, name, type')
     .order('name')
 
+  // Obtener entidades contratantes
+  const { data: entities } = await supabase
+    .from('contracting_entities')
+    .select('id, name')
+    .is('deleted_at', null)
+    .order('name')
+
   return (
     <NewContractForm
       organizations={organizations || []}
       profiles={profiles || []}
       categories={categories || []}
+      entities={entities || []}
       currentUserId={user?.id || ''}
     />
   )
