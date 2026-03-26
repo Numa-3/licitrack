@@ -180,11 +180,11 @@ export default function EntitiesClient({ entities: initialEntities, userRole, cu
                 const chamberOk = !!(chamberDoc && chamberDoc.verified)
 
                 return (
-                  <tr key={entity.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={entity.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => router.push(`/entities/${entity.id}`)}>
                     <td className="px-5 py-4">
-                      <Link href={`/entities/${entity.id}`} className="font-medium text-gray-900 hover:underline">
+                      <span className="font-medium text-gray-900">
                         {entity.name}
-                      </Link>
+                      </span>
                     </td>
                     <td className="px-5 py-4 text-gray-600">{entity.nit || '—'}</td>
                     <td className="px-5 py-4 text-gray-600">{entity.city || '—'}</td>

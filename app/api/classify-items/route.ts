@@ -47,6 +47,7 @@ Si un ítem no encaja en ninguna categoría existente, sugiere una nueva con "ne
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
+        max_tokens: descriptions.length * 40,
       }),
     })
 

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
+import { formatCurrency } from '@/lib/utils/format'
 
 // ── Types ──────────────────────────────────────────────────────
 type Item = {
@@ -123,9 +124,6 @@ function getInitials(name: string): string {
   return name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
 }
 
-function formatCurrency(n: number): string {
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n)
-}
 
 function ProgressBar({ items }: { items: { status: string }[] }) {
   if (items.length === 0) return <span className="text-xs text-gray-400">Sin ítems</span>

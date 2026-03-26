@@ -192,6 +192,11 @@ export default function NewContractForm({ organizations, profiles, categories, e
   const [classifying, setClassifying] = useState(false)
   const [classifyError, setClassifyError] = useState<string | null>(null)
 
+  // Pagination
+  const [previewPage, setPreviewPage] = useState(0)
+  const [reviewPage, setReviewPage] = useState(0)
+  const ROWS_PER_PAGE = 20
+
   // Shared
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -800,7 +805,7 @@ export default function NewContractForm({ organizations, profiles, categories, e
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {rawRows.slice(0, 10).map((row, ri) => (
+                {rawRows.slice(previewPage * ROWS_PER_PAGE, (previewPage + 1) * ROWS_PER_PAGE).map((row, ri) => (
                   <tr key={ri}>
                     {rawHeaders.map((_, ci) => (
                       <td
@@ -818,10 +823,16 @@ export default function NewContractForm({ organizations, profiles, categories, e
             </table>
           </div>
 
-          {rawRows.length > 10 && (
-            <p className="text-xs text-gray-400 mb-4">
-              Mostrando 10 de {rawRows.length} filas.
-            </p>
+          {rawRows.length > ROWS_PER_PAGE && (
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-xs text-gray-400">
+                Mostrando {previewPage * ROWS_PER_PAGE + 1}–{Math.min((previewPage + 1) * ROWS_PER_PAGE, rawRows.length)} de {rawRows.length} filas
+              </p>
+              <div className="flex gap-2">
+                <button type="button" disabled={previewPage === 0} onClick={() => setPreviewPage(p => p - 1)} className="px-3 py-1 text-sm border rounded-lg disabled:opacity-40">← Anterior</button>
+                <button type="button" disabled={(previewPage + 1) * ROWS_PER_PAGE >= rawRows.length} onClick={() => setPreviewPage(p => p + 1)} className="px-3 py-1 text-sm border rounded-lg disabled:opacity-40">Siguiente →</button>
+              </div>
+            </div>
           )}
 
           {error && (
@@ -927,9 +938,11 @@ export default function NewContractForm({ organizations, profiles, categories, e
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {reviewRows.map((row, i) => (
+                {reviewRows.slice(reviewPage * ROWS_PER_PAGE, (reviewPage + 1) * ROWS_PER_PAGE).map((row, i) => {
+                  const realIndex = reviewPage * ROWS_PER_PAGE + i
+                  return (
                   <tr
-                    key={i}
+                    key={realIndex}
                     className={`${
                       !row.selected
                         ? 'opacity-40 bg-gray-50'
@@ -942,18 +955,18 @@ export default function NewContractForm({ organizations, profiles, categories, e
                       <input
                         type="checkbox"
                         checked={row.selected}
-                        onChange={(e) => updateReviewRow(i, { selected: e.target.checked })}
+                        onChange={(e) => updateReviewRow(realIndex, { selected: e.target.checked })}
                         className="rounded"
                       />
                     </td>
                     <td className="px-3 py-2 text-gray-400 text-xs">
-                      {row.item_number ?? i + 1}
+                      {row.item_number ?? realIndex + 1}
                     </td>
                     <td className="px-3 py-2">
                       <input
                         type="text"
                         value={row.short_name}
-                        onChange={(e) => updateReviewRow(i, { short_name: e.target.value })}
+                        onChange={(e) => updateReviewRow(realIndex, { short_name: e.target.value })}
                         placeholder={row.description.slice(0, 30)}
                         className="w-full px-2 py-1 border border-gray-200 rounded text-xs text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-gray-900"
                       />
@@ -964,7 +977,7 @@ export default function NewContractForm({ organizations, profiles, categories, e
                     <td className="px-3 py-2">
                       <select
                         value={row.category_id}
-                        onChange={(e) => updateReviewRow(i, { category_id: e.target.value })}
+                        onChange={(e) => updateReviewRow(realIndex, { category_id: e.target.value })}
                         className="w-full px-1 py-1 border border-gray-200 rounded text-xs text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-gray-900"
                       >
                         <option value="">Sin categoría</option>
@@ -980,7 +993,7 @@ export default function NewContractForm({ organizations, profiles, categories, e
                         <select
                           value={row.type}
                           onChange={(e) =>
-                            updateReviewRow(i, { type: e.target.value as ReviewRow['type'] })
+                            updateReviewRow(realIndex, { type: e.target.value as ReviewRow['type'] })
                           }
                           className="w-full px-1 py-1 border border-gray-200 rounded text-xs text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-gray-900"
                         >
@@ -997,7 +1010,7 @@ export default function NewContractForm({ organizations, profiles, categories, e
                         type="number"
                         value={row.quantity}
                         onChange={(e) =>
-                          updateReviewRow(i, { quantity: parseFloat(e.target.value) || 0 })
+                          updateReviewRow(realIndex, { quantity: parseFloat(e.target.value) || 0 })
                         }
                         min={0}
                         step="any"
@@ -1013,10 +1026,24 @@ export default function NewContractForm({ organizations, profiles, categories, e
                         : '—'}
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {reviewRows.length > ROWS_PER_PAGE && (
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-xs text-gray-400">
+                Mostrando {reviewPage * ROWS_PER_PAGE + 1}–{Math.min((reviewPage + 1) * ROWS_PER_PAGE, reviewRows.length)} de {reviewRows.length} ítems
+              </p>
+              <div className="flex gap-2">
+                <button type="button" disabled={reviewPage === 0} onClick={() => setReviewPage(p => p - 1)} className="px-3 py-1 text-sm border rounded-lg disabled:opacity-40">← Anterior</button>
+                <button type="button" disabled={(reviewPage + 1) * ROWS_PER_PAGE >= reviewRows.length} onClick={() => setReviewPage(p => p + 1)} className="px-3 py-1 text-sm border rounded-lg disabled:opacity-40">Siguiente →</button>
+              </div>
+            </div>
+          )}
 
           {/* Summary */}
           <div className="flex items-center justify-between mb-4">

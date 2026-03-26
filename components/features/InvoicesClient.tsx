@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import DeleteButton from '@/components/ui/DeleteButton'
+import { formatCurrency } from '@/lib/utils/format'
 
 // ── Types ──────────────────────────────────────────────────────
 type InvoiceItem = {
@@ -45,10 +46,6 @@ type Props = {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
-function formatCurrency(n: number | null | undefined): string {
-  if (n == null) return '—'
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n)
-}
 
 function formatDate(d: string): string {
   return new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -74,6 +71,8 @@ export default function InvoicesClient({ invoices: initialInvoices, contracts, s
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [xmlFile, setXmlFile] = useState<File | null>(null)
+  const [parsing, setParsing] = useState(false)
+  const [parseMsg, setParseMsg] = useState<string | null>(null)
 
   // Unique organizations from contracts
   const orgs = useMemo(() => {
@@ -123,6 +122,117 @@ export default function InvoicesClient({ invoices: initialInvoices, contracts, s
       else next.add(id)
       return next
     })
+  }
+
+  // Auto-fill form from XML DIAN or PDF
+  async function handleXmlUpload(file: File) {
+    setXmlFile(file)
+    setParsing(true)
+    setParseMsg(null)
+    try {
+      const xml = await file.text()
+      const res = await fetch('/api/parse-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ xml }),
+      })
+      const data = await res.json()
+      if (data.error) {
+        setParseMsg('No se pudo leer el XML: ' + data.error)
+      } else {
+        applyParsedData(data)
+        setParseMsg('Datos extraídos del XML DIAN')
+      }
+    } catch {
+      setParseMsg('Error leyendo el XML')
+    }
+    setParsing(false)
+  }
+
+  async function handlePdfUpload(file: File) {
+    setPdfFile(file)
+    // Only auto-parse PDF if no XML was uploaded
+    if (xmlFile) return
+
+    setParsing(true)
+    setParseMsg('Extrayendo texto del PDF...')
+    try {
+      // Load pdf.js from CDN (avoids Next.js SSR bundling issues)
+      const PDFJS_VERSION = '3.11.174'
+      const cdnBase = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const w = window as any
+      if (!w.pdfjsLib) {
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement('script')
+          script.src = `${cdnBase}/pdf.min.js`
+          script.onload = () => resolve()
+          script.onerror = () => reject(new Error('No se pudo cargar pdf.js'))
+          document.head.appendChild(script)
+        })
+        w.pdfjsLib.GlobalWorkerOptions.workerSrc = `${cdnBase}/pdf.worker.min.js`
+      }
+      const pdfjsLib = w.pdfjsLib
+
+      const buffer = await file.arrayBuffer()
+      const doc = await pdfjsLib.getDocument({ data: buffer }).promise
+      const pages: string[] = []
+      for (let i = 1; i <= doc.numPages; i++) {
+        const page = await doc.getPage(i)
+        const content = await page.getTextContent()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pages.push(content.items.map((item: any) => item.str || '').join(' '))
+      }
+      await doc.destroy()
+      const pdfText = pages.join('\n').trim()
+
+      if (!pdfText) {
+        setParseMsg('El PDF no contiene texto extraíble (puede ser una imagen escaneada)')
+        setParsing(false)
+        return
+      }
+
+      setParseMsg('Analizando factura con IA...')
+      const res = await fetch('/api/parse-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pdf_text: pdfText }),
+      })
+      const data = await res.json()
+      if (data.error) {
+        setParseMsg('No se pudieron extraer datos: ' + data.error)
+      } else {
+        applyParsedData(data)
+        setParseMsg('Datos extraídos del PDF con IA')
+      }
+    } catch (err) {
+      setParseMsg('Error procesando PDF: ' + (err instanceof Error ? err.message : 'error desconocido'))
+    }
+    setParsing(false)
+  }
+
+  function applyParsedData(data: Record<string, unknown>) {
+    setForm(prev => ({
+      ...prev,
+      invoice_number: String(data.invoice_number || prev.invoice_number || ''),
+      issue_date: String(data.issue_date || prev.issue_date || ''),
+      subtotal: data.subtotal != null ? String(data.subtotal) : prev.subtotal,
+      tax: data.tax != null ? String(data.tax) : prev.tax,
+      total: data.total != null ? String(data.total) : prev.total,
+    }))
+
+    // Auto-select supplier by NIT
+    if (data.supplier_nit) {
+      const nit = String(data.supplier_nit).replace(/[^0-9]/g, '')
+      // We don't have NIT in the suppliers prop, but we can match by name
+      if (data.supplier_name) {
+        const name = String(data.supplier_name).toLowerCase()
+        const match = suppliers.find(s => s.name.toLowerCase().includes(name) || name.includes(s.name.toLowerCase()))
+        if (match) {
+          setForm(prev => ({ ...prev, supplier_id: match.id }))
+        }
+      }
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -198,6 +308,8 @@ export default function InvoicesClient({ invoices: initialInvoices, contracts, s
     setSelectedItems(new Set())
     setPdfFile(null)
     setXmlFile(null)
+    setParsing(false)
+    setParseMsg(null)
     setLoading(false)
     router.refresh()
   }
@@ -375,18 +487,28 @@ export default function InvoicesClient({ invoices: initialInvoices, contracts, s
               {/* PDF upload */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">PDF de factura *</label>
-                <input type="file" accept=".pdf" onChange={e => setPdfFile(e.target.files?.[0] || null)}
+                <input type="file" accept=".pdf" onChange={e => { const f = e.target.files?.[0]; if (f) handlePdfUpload(f) }}
                   className="w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200" />
                 {pdfFile && <p className="text-xs text-green-600 mt-1">{pdfFile.name}</p>}
               </div>
 
-              {/* XML upload (optional) */}
+              {/* XML upload (optional — auto-fills form) */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">XML DIAN (opcional)</label>
-                <input type="file" accept=".xml" onChange={e => setXmlFile(e.target.files?.[0] || null)}
+                <label className="block text-sm font-medium text-gray-700 mb-1">XML DIAN (opcional — auto-completa datos)</label>
+                <input type="file" accept=".xml" onChange={e => { const f = e.target.files?.[0]; if (f) handleXmlUpload(f) }}
                   className="w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200" />
                 {xmlFile && <p className="text-xs text-green-600 mt-1">{xmlFile.name}</p>}
               </div>
+
+              {/* Parse status */}
+              {(parsing || parseMsg) && (
+                <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+                  parsing ? 'bg-blue-50 text-blue-700' : parseMsg?.startsWith('Datos') ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                }`}>
+                  {parsing && <span className="animate-spin inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full" />}
+                  {parsing ? 'Extrayendo datos...' : parseMsg}
+                </div>
+              )}
 
               {/* Associate items */}
               {form.contract_id && availableItems.length > 0 && (

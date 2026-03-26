@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import DeleteButton from '@/components/ui/DeleteButton'
+import { formatCurrency } from '@/lib/utils/format'
 
 // ── Types ──────────────────────────────────────────────────────
 type Supplier = { id: string; name: string; whatsapp: string | null }
@@ -132,10 +133,6 @@ const ACTION_LABELS: Record<string, string> = {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
-function formatCurrency(n: number | null | undefined): string {
-  if (n == null) return '—'
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n)
-}
 
 function marginPct(sale: number | null, cost: number | null): number | null {
   if (!sale || !cost || sale === 0) return null
@@ -440,9 +437,14 @@ export default function ContractDetail({
     setLoading(true)
     setError(null)
 
+    // Auto-set payment_status to 'paid' when logistics status changes to 'purchased'
+    const autoPayment = field === 'status' && value === 'purchased'
+    const updateData: Record<string, unknown> = { [field]: value }
+    if (autoPayment) updateData.payment_status = 'paid'
+
     const { error: err } = await supabase
       .from('items')
-      .update({ [field]: value })
+      .update(updateData)
       .eq('id', itemId)
 
     if (err) { setError(err.message); setLoading(false); return }
@@ -455,11 +457,13 @@ export default function ContractDetail({
       assigned_to: 'assigned_to_changed',
     }
     await logActivity(actionMap[field] || 'item_updated', itemId, { field, new_value: label || value })
+    if (autoPayment) await logActivity('payment_status_changed', itemId, { field: 'payment_status', new_value: 'Pagado (auto)' })
 
     // Update local state
     setItems(prev => prev.map(i => {
       if (i.id !== itemId) return i
       const updated = { ...i, [field]: value }
+      if (autoPayment) updated.payment_status = 'paid'
       if (field === 'supplier_id') {
         const sup = suppliers.find(s => s.id === value)
         updated.suppliers = sup ? { id: sup.id, name: sup.name, whatsapp: sup.whatsapp } : null
@@ -473,6 +477,7 @@ export default function ContractDetail({
     setSideItem(prev => {
       if (!prev || prev.id !== itemId) return prev
       const updated = { ...prev, [field]: value }
+      if (autoPayment) updated.payment_status = 'paid'
       if (field === 'supplier_id') {
         const sup = suppliers.find(s => s.id === value)
         updated.suppliers = sup ? { id: sup.id, name: sup.name, whatsapp: sup.whatsapp } : null
