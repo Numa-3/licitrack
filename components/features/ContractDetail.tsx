@@ -42,8 +42,8 @@ type Contract = {
   name: string
   entity: string
   entity_id: string | null
-  type: 'purchase' | 'logistics' | 'service' | 'mixed'
-  status: 'draft' | 'active' | 'completed' | 'cancelled'
+  type: 'supply' | 'construction' | 'sale' | 'service' | 'logistics' | 'mixed'
+  status: 'draft' | 'active' | 'completed' | 'settled' | 'cancelled'
   created_at: string
   updated_at: string
   organization_id: string
@@ -81,14 +81,21 @@ type Props = {
 
 // ── Constants ──────────────────────────────────────────────────
 const CONTRACT_TYPE_LABELS: Record<string, string> = {
-  purchase: 'Compras', logistics: 'Logística', service: 'Servicios', mixed: 'Mixto',
+  supply: 'Suministro', construction: 'Obra', sale: 'Compraventa',
+  service: 'Servicios', logistics: 'Logística', mixed: 'Mixto',
+  purchase: 'Compras', // legacy
 }
 const CONTRACT_TYPE_ICONS: Record<string, string> = {
-  purchase: '🛒', logistics: '🚚', service: '🔧', mixed: '📦',
+  supply: '🛒', construction: '🏗️', sale: '💰',
+  service: '🔧', logistics: '🚚', mixed: '📦',
+  purchase: '🛒', // legacy
 }
 
 const STATUS_FLOWS: Record<string, string[]> = {
-  purchase: ['pending', 'sourced', 'purchased', 'shipped', 'received'],
+  supply: ['pending', 'sourced', 'purchased', 'shipped', 'received'],
+  purchase: ['pending', 'sourced', 'purchased', 'shipped', 'received'], // legacy
+  construction: ['pending', 'in_progress', 'done'],
+  sale: ['pending', 'sourced', 'purchased', 'shipped', 'received'],
   logistics: ['pending', 'in_progress', 'done'],
   service: ['pending', 'in_progress', 'done'],
 }

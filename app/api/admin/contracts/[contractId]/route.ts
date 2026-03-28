@@ -67,6 +67,7 @@ export async function DELETE(
       .from('items')
       .select('*', { count: 'exact', head: true })
       .eq('contract_id', contractId)
+      .is('deleted_at', null)
 
     // Delete items
     await supabase.from('items').delete().eq('contract_id', contractId)

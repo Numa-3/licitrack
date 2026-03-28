@@ -37,3 +37,24 @@ export async function withRetry<T>(
   // Should never reach here, but TypeScript needs it
   return { data: null as T, error: { message: 'Error inesperado', canRetry: false } }
 }
+
+/**
+ * Retry wrapper for fetch() calls to API routes.
+ * Retries on network errors only (not HTTP errors like 400/500).
+ */
+export async function fetchWithRetry(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  maxRetries = 2,
+  delayMs = 2000,
+): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fetch(input, init)
+    } catch (err) {
+      if (attempt === maxRetries) throw err
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
+  }
+  throw new Error('Error inesperado')
+}

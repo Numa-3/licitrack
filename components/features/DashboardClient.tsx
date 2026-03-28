@@ -23,8 +23,8 @@ type Contract = {
   id: string
   name: string
   entity: string
-  type: 'purchase' | 'logistics' | 'service' | 'mixed'
-  status: 'draft' | 'active' | 'completed' | 'cancelled'
+  type: 'supply' | 'construction' | 'sale' | 'service' | 'logistics' | 'mixed'
+  status: 'draft' | 'active' | 'completed' | 'settled' | 'cancelled'
   created_at: string
   organizations: { name: string } | null
   profiles: { name: string } | null
@@ -80,10 +80,14 @@ type Props = {
 
 // ── Constants ──────────────────────────────────────────────────
 const CONTRACT_TYPE_LABELS: Record<string, string> = {
-  purchase: 'Compras', logistics: 'Logística', service: 'Servicios', mixed: 'Mixto',
+  supply: 'Suministro', construction: 'Obra', sale: 'Compraventa',
+  service: 'Servicios', logistics: 'Logística', mixed: 'Mixto',
+  purchase: 'Compras', // legacy
 }
 const CONTRACT_TYPE_ICONS: Record<string, string> = {
-  purchase: '🛒', logistics: '🚚', service: '🔧', mixed: '📦',
+  supply: '🛒', construction: '🏗️', sale: '💰',
+  service: '🔧', logistics: '🚚', mixed: '📦',
+  purchase: '🛒', // legacy
 }
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Borrador', active: 'Activo', completed: 'Completado', cancelled: 'Cancelado',

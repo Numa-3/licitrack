@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import DeleteButton from '@/components/ui/DeleteButton'
 import { formatCurrency } from '@/lib/utils/format'
+import { fetchWithRetry } from '@/lib/supabase/retry'
 
 // ── Types ──────────────────────────────────────────────────────
 type InvoiceItem = {
@@ -131,7 +132,7 @@ export default function InvoicesClient({ invoices: initialInvoices, contracts, s
     setParseMsg(null)
     try {
       const xml = await file.text()
-      const res = await fetch('/api/parse-invoice', {
+      const res = await fetchWithRetry('/api/parse-invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ xml }),
@@ -193,7 +194,7 @@ export default function InvoicesClient({ invoices: initialInvoices, contracts, s
       }
 
       setParseMsg('Analizando factura con IA...')
-      const res = await fetch('/api/parse-invoice', {
+      const res = await fetchWithRetry('/api/parse-invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pdf_text: pdfText }),

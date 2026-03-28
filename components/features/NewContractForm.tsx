@@ -4,6 +4,7 @@ import { useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import * as XLSX from 'xlsx'
+import { fetchWithRetry } from '@/lib/supabase/retry'
 
 // ── Types ──────────────────────────────────────────────────────
 type Organization = { id: string; name: string }
@@ -46,9 +47,11 @@ type ColumnMapping = {
 
 // ── Constants ──────────────────────────────────────────────────
 const CONTRACT_TYPES = [
-  { value: 'purchase', label: 'Compras', icon: '🛒', description: 'Adquisición de bienes' },
-  { value: 'logistics', label: 'Logística', icon: '🚚', description: 'Coordinación de eventos y transporte' },
+  { value: 'supply', label: 'Suministro', icon: '🛒', description: 'Adquisición de bienes' },
+  { value: 'construction', label: 'Obra', icon: '🏗️', description: 'Construcción e infraestructura' },
+  { value: 'sale', label: 'Compraventa', icon: '💰', description: 'Compra y venta de bienes' },
   { value: 'service', label: 'Servicios', icon: '🔧', description: 'Prestación de servicios' },
+  { value: 'logistics', label: 'Logística', icon: '🚚', description: 'Eventos, transporte y alojamiento' },
   { value: 'mixed', label: 'Mixto', icon: '📦', description: 'Combinación de tipos' },
 ]
 
@@ -166,6 +169,8 @@ export default function NewContractForm({ organizations, profiles, categories, e
     organization_id: '',
     type: '',
     assigned_to: currentUserId,
+    start_date: '',
+    end_date: '',
   })
   const [contractId, setContractId] = useState<string | null>(null)
 
@@ -224,6 +229,8 @@ export default function NewContractForm({ organizations, profiles, categories, e
         status: 'draft',
         created_by: currentUserId,
         assigned_to: form.assigned_to || null,
+        start_date: form.start_date || null,
+        end_date: form.end_date || null,
       })
       .select('id')
       .single()
@@ -342,7 +349,7 @@ export default function NewContractForm({ organizations, profiles, categories, e
     setClassifyError(null)
 
     try {
-      const res = await fetch('/api/classify-items', {
+      const res = await fetchWithRetry('/api/classify-items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -593,7 +600,7 @@ export default function NewContractForm({ organizations, profiles, categories, e
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Tipo de contrato
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 {CONTRACT_TYPES.map((t) => (
                   <button
                     key={t.value}
@@ -612,6 +619,31 @@ export default function NewContractForm({ organizations, profiles, categories, e
                     </div>
                   </button>
                 ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Fecha de inicio
+                </label>
+                <input
+                  type="date"
+                  value={form.start_date}
+                  onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Fecha de fin
+                </label>
+                <input
+                  type="date"
+                  value={form.end_date}
+                  onChange={(e) => setForm({ ...form, end_date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+                />
               </div>
             </div>
 
