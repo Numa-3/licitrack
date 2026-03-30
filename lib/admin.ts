@@ -1,6 +1,31 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 /**
+ * Verifies the current user is authenticated (any role).
+ * Returns the supabase client, user id, and role, or a Response error.
+ */
+export async function requireAuth() {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: Response.json({ error: 'No autorizado' }, { status: 401 }) }
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (!profile) {
+    return { error: Response.json({ error: 'Perfil no encontrado' }, { status: 401 }) }
+  }
+
+  return { supabase, userId: user.id, role: profile.role as 'jefe' | 'operadora' }
+}
+
+/**
  * Verifies the current user is authenticated and has the 'jefe' role.
  * Returns the supabase client and user id, or a Response error.
  */

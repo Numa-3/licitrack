@@ -497,6 +497,55 @@ CREATE POLICY "actividad: leer (jefe)" ON activity_log
   FOR SELECT USING (get_my_role() = 'jefe');
 
 
+-- ── tasks (Apuntes / Kanban) ─────────────────────────────
+CREATE TABLE tasks (
+  id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  title        TEXT NOT NULL,
+  description  TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'done')),
+  priority     TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+  color        TEXT NOT NULL DEFAULT 'gray',
+  position     INTEGER NOT NULL DEFAULT 0,
+  assigned_to  UUID REFERENCES profiles(id),
+  contract_id  UUID REFERENCES contracts(id),
+  due_date     DATE,
+  completed_at TIMESTAMPTZ,
+  created_by   UUID NOT NULL REFERENCES profiles(id),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TRIGGER tasks_updated_at
+  BEFORE UPDATE ON tasks
+  FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "tareas: leer" ON tasks
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "tareas: insertar" ON tasks
+  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
+CREATE POLICY "tareas: actualizar (jefe)" ON tasks
+  FOR UPDATE USING (get_my_role() = 'jefe');
+
+CREATE POLICY "tareas: actualizar (operadora)" ON tasks
+  FOR UPDATE USING (
+    get_my_role() = 'operadora'
+    AND (created_by = auth.uid() OR assigned_to = auth.uid())
+  );
+
+CREATE POLICY "tareas: eliminar (jefe)" ON tasks
+  FOR DELETE USING (get_my_role() = 'jefe');
+
+CREATE POLICY "tareas: eliminar (operadora)" ON tasks
+  FOR DELETE USING (
+    get_my_role() = 'operadora'
+    AND created_by = auth.uid()
+  );
+
+
 -- ============================================================
 -- FIN DEL SCHEMA
 -- ============================================================
