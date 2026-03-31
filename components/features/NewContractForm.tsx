@@ -68,6 +68,77 @@ function parseTSV(text: string): string[][] {
     .filter(r => r.some(cell => cell !== ''))
 }
 
+// ── Detect column roles from header keywords ───────────────────
+const COL_PATTERNS: Record<string, RegExp> = {
+  item_number: /^(#|no\.?|item|ítem|num|n[úu]mero|consec)/i,
+  description: /^(desc|especific|detalle|producto|bien|servicio|objeto|element|concepto|nombre)/i,
+  unit: /^(uni|medida|und|u\.?\s*m)/i,
+  quantity: /^(cant|qty|cantidad)/i,
+  sale_price: /^(val|prec|costo|precio|v\.\s*unit|valor\s*unit|vr|vlr|unitario)/i,
+}
+
+type ColMap = {
+  item_number: number | null
+  description: number | null
+  unit: number | null
+  quantity: number | null
+  sale_price: number | null
+}
+
+function detectColumns(headerRow: string[]): ColMap | null {
+  const map: ColMap = { item_number: null, description: null, unit: null, quantity: null, sale_price: null }
+
+  for (let i = 0; i < headerRow.length; i++) {
+    const cell = headerRow[i].trim()
+    if (!cell) continue
+    for (const [role, re] of Object.entries(COL_PATTERNS)) {
+      if (re.test(cell) && map[role as keyof ColMap] === null) {
+        map[role as keyof ColMap] = i
+        break
+      }
+    }
+  }
+
+  return map.description !== null ? map : null
+}
+
+// ── Parse Colombian numbers ────────────────────────────────────
+function parseColNumber(val: string): number {
+  let s = val.trim().replace(/[$\s]/g, '')
+  if (!s) return 0
+
+  // Colombian: dots as thousands, comma as decimal (e.g., "1.250.000,50")
+  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) {
+    s = s.replace(/\./g, '').replace(',', '.')
+    return parseFloat(s) || 0
+  }
+  // Dots only as thousands (e.g., "1.250.000")
+  if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
+    return parseFloat(s.replace(/\./g, '')) || 0
+  }
+  // Standard number or comma decimal
+  s = s.replace(',', '.')
+  return parseFloat(s) || 0
+}
+
+function isDataRow(row: string[], cols: ColMap): boolean {
+  const desc = cols.description !== null ? row[cols.description]?.trim() : ''
+  if (!desc) return false
+  // Skip headers (if the description cell matches a known header keyword)
+  if (COL_PATTERNS.description.test(desc)) return false
+  // Skip totals/subtotals
+  if (/^(total|subtotal|sub-total|gran total|iva|impuesto)/i.test(desc)) return false
+  return true
+}
+
+function findHeaderRow(rows: string[][]): number {
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const cols = detectColumns(rows[i])
+    if (cols) return i
+  }
+  return -1
+}
+
 // ── Steps ──────────────────────────────────────────────────────
 type Step = 'form' | 'paste' | 'review'
 
@@ -158,17 +229,85 @@ export default function NewContractForm({ organizations, profiles, categories, e
   async function handleProcessPaste() {
     if (!pastePreview || pastePreview.length === 0) return
     setError(null)
-
-    // Always send all raw rows to AI — it handles headers, noise, everything
-    aiExtractItems(pastePreview)
-  }
-
-  async function aiExtractItems(rawRows: string[][]) {
     setStep('review')
     setClassifying(true)
     setClassifyError(null)
     setReviewRows([])
 
+    try {
+      // Step 1: Detect columns from header (deterministic)
+      const headerIdx = findHeaderRow(pastePreview)
+      let cols: ColMap | null = null
+      let dataStartIdx = 0
+
+      if (headerIdx >= 0) {
+        cols = detectColumns(pastePreview[headerIdx])
+        dataStartIdx = headerIdx + 1
+      }
+
+      if (!cols || cols.description === null) {
+        // Fallback: send to AI for structure detection
+        await aiExtractItems(pastePreview)
+        return
+      }
+
+      // Step 2: Extract data rows (deterministic)
+      const dataRows = pastePreview.slice(dataStartIdx).filter(r => isDataRow(r, cols))
+
+      if (dataRows.length === 0) {
+        setClassifyError('No se encontraron items de datos. Verifica que copiaste la tabla correcta.')
+        setClassifying(false)
+        return
+      }
+
+      // Step 3: Parse items deterministically
+      const defaultType = form.type === 'mixed' ? 'purchase' : (form.type as ReviewRow['type'])
+      const parsedItems: ReviewRow[] = dataRows.map((row, i) => ({
+        rowIndex: i,
+        item_number: cols.item_number !== null ? parseColNumber(row[cols.item_number]) || null : null,
+        description: cols.description !== null ? row[cols.description]?.trim() ?? '' : '',
+        unit: cols.unit !== null ? row[cols.unit]?.trim() ?? '' : '',
+        quantity: cols.quantity !== null ? parseColNumber(row[cols.quantity]) || 1 : 1,
+        sale_price: cols.sale_price !== null ? parseColNumber(row[cols.sale_price]) || 0 : 0,
+        selected: true,
+        short_name: '',
+        category_id: '',
+        type: defaultType,
+      }))
+
+      setReviewRows(parsedItems)
+
+      // Step 4: AI classifies descriptions only (short_name, category, type)
+      const descriptions = parsedItems.map(it => it.description).filter(Boolean)
+      if (descriptions.length > 0) {
+        const res = await fetchWithRetry('/api/classify-items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ descriptions, categories }),
+        })
+        const data = await res.json()
+        if (data.items && Array.isArray(data.items)) {
+          setReviewRows(prev => prev.map((row, i) => {
+            const ai = data.items[i] as { short_name?: string; category?: string; type?: string } | undefined
+            if (!ai) return row
+            const matchedCat = categories.find(c => c.name.toLowerCase() === (ai.category ?? '').toLowerCase())
+            return {
+              ...row,
+              short_name: ai.short_name ?? row.short_name,
+              category_id: matchedCat?.id ?? row.category_id,
+              type: (ai.type as ReviewRow['type']) ?? row.type,
+            }
+          }))
+        }
+      }
+    } catch {
+      setClassifyError('Error al procesar. Intenta de nuevo.')
+    } finally {
+      setClassifying(false)
+    }
+  }
+
+  async function aiExtractItems(rawRows: string[][]) {
     try {
       const res = await fetchWithRetry('/api/extract-items', {
         method: 'POST',
@@ -183,7 +322,7 @@ export default function NewContractForm({ organizations, profiles, categories, e
       const data = await res.json()
 
       if (!data.items || data.items.length === 0) {
-        setClassifyError('La IA no pudo interpretar los datos. Intenta copiar solo la tabla de items.')
+        setClassifyError(`La IA no pudo interpretar los datos.${data.reason ? ' ' + data.reason : ''} Intenta copiar solo la tabla de items.`)
         return
       }
 
@@ -226,7 +365,11 @@ export default function NewContractForm({ organizations, profiles, categories, e
 
   function handleRetryClassify() {
     if (pastePreview && pastePreview.length > 0) {
-      aiExtractItems(pastePreview)
+      setStep('review')
+      setClassifying(true)
+      setClassifyError(null)
+      setReviewRows([])
+      handleProcessPaste()
     }
   }
 

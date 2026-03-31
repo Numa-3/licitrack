@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.OPENROUTER_API_KEY
     if (!apiKey) {
-      return Response.json({ items: [] })
+      return Response.json({ items: [], reason: 'API key no configurada' })
     }
 
     const model = process.env.LLM_MODEL || 'qwen/qwen-plus'
@@ -107,8 +107,9 @@ Reglas:
     })
 
     if (!res.ok) {
-      console.error('OpenRouter error:', res.status, await res.text())
-      return Response.json({ items: [] })
+      const errText = await res.text()
+      console.error('OpenRouter error:', res.status, errText)
+      return Response.json({ items: [], reason: `Error del modelo AI (${res.status})` })
     }
 
     const data = await res.json()
@@ -122,7 +123,7 @@ Reglas:
     const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
       console.error('Could not extract JSON from LLM response:', content)
-      return Response.json({ items: [] })
+      return Response.json({ items: [], reason: 'La AI no devolvio JSON valido' })
     }
 
     const aiResult = JSON.parse(jsonMatch[0]) as {
@@ -139,7 +140,7 @@ Reglas:
 
     const cols = aiResult.columns
     if (cols.description === null || cols.description === undefined) {
-      return Response.json({ items: [] })
+      return Response.json({ items: [], reason: 'La AI no encontro columna de descripcion' })
     }
 
     // Step 2: Parse numbers deterministically from raw data
@@ -167,7 +168,7 @@ Reglas:
     return Response.json({ items })
   } catch (err) {
     console.error('extract-items error:', err)
-    return Response.json({ items: [] })
+    return Response.json({ items: [], reason: `Error interno: ${err instanceof Error ? err.message : 'desconocido'}` })
   }
 }
 
