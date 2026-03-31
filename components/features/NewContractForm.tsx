@@ -837,7 +837,7 @@ export default function NewContractForm({ organizations, profiles, categories, e
             </div>
           )}
 
-          {/* Summary */}
+          {/* Summary + Total */}
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm text-gray-500">
               {reviewRows.filter(r => r.selected).length} de {reviewRows.length} items seleccionados
@@ -846,6 +846,9 @@ export default function NewContractForm({ organizations, profiles, categories, e
                   — {reviewRows.filter(r => r.selected && isRowInvalid(r)).length} con errores
                 </span>
               )}
+            </p>
+            <p className="text-sm font-semibold text-gray-900">
+              Total: ${reviewRows.filter(r => r.selected).reduce((sum, r) => sum + r.quantity * r.sale_price, 0).toLocaleString('es-CO')}
             </p>
           </div>
 
