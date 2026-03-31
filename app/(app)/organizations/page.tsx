@@ -1,8 +1,8 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { getAuthUser } from '@/lib/supabase/server'
 import OrganizationsClient from '@/components/features/OrganizationsClient'
 
 export default async function OrganizationsPage() {
-  const supabase = await createServerSupabaseClient()
+  const { supabase } = await getAuthUser()
 
   const { data: orgs } = await supabase
     .from('organizations')

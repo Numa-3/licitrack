@@ -1,56 +1,55 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { getAuthUser } from '@/lib/supabase/server'
 import DashboardClient from '@/components/features/DashboardClient'
 
 export default async function DashboardPage() {
-  const supabase = await createServerSupabaseClient()
+  const { supabase, userRole } = await getAuthUser()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  // Obtener rol del usuario
-  let userRole = 'operadora'
-  if (user) {
-    const { data: profile } = await supabase
+  // All queries in parallel
+  const [
+    { data: contracts },
+    { data: items },
+    { data: shipments },
+    { data: invoices },
+    { data: profiles },
+    { data: supplierDocs },
+  ] = await Promise.all([
+    supabase
+      .from('contracts')
+      .select(`
+        id, name, entity, type, status, created_at,
+        organizations ( name ),
+        profiles!contracts_assigned_to_fkey ( name ),
+        items ( status )
+      `)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('items')
+      .select('id, short_name, status, type, sale_price, supplier_cost, supplier_id, assigned_to, updated_at, contract_id, quantity')
+      .is('deleted_at', null),
+    supabase
+      .from('shipments')
+      .select(`
+        id, contract_id, estimated_arrival, actual_arrival, origin_city,
+        contracts ( name )
+      `),
+    supabase
+      .from('invoices')
+      .select('id, total, contract_id'),
+    supabase
       .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-    if (profile) userRole = profile.role
-  }
+      .select('id, name, role')
+      .order('name'),
+    supabase
+      .from('supplier_documents')
+      .select(`
+        id, supplier_id, type, expires_at,
+        suppliers ( name )
+      `)
+      .not('expires_at', 'is', null),
+  ])
 
-  // Contratos con organización, responsable e ítems
-  const { data: contracts } = await supabase
-    .from('contracts')
-    .select(`
-      id, name, entity, type, status, created_at,
-      organizations ( name ),
-      profiles!contracts_assigned_to_fkey ( name ),
-      items ( status )
-    `)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-
-  // Todos los ítems activos (para métricas, alertas, vista por persona)
-  const { data: items } = await supabase
-    .from('items')
-    .select('id, short_name, status, type, sale_price, supplier_cost, supplier_id, assigned_to, updated_at, contract_id, quantity')
-    .is('deleted_at', null)
-
-  // Envíos (para métrica en camino + alertas retrasados)
-  const { data: shipments } = await supabase
-    .from('shipments')
-    .select(`
-      id, contract_id, estimated_arrival, actual_arrival, origin_city,
-      contracts ( name )
-    `)
-
-  // Facturas (para métrica total)
-  const { data: invoices } = await supabase
-    .from('invoices')
-    .select('id, total, contract_id')
-
-  // Últimas actividades (para feed inline, solo si es jefe)
+  // Activities only for jefe (conditional, runs after parallel batch)
   let activities: unknown[] = []
   if (userRole === 'jefe') {
     const { data } = await supabase
@@ -63,21 +62,6 @@ export default async function DashboardPage() {
       .limit(10)
     activities = data || []
   }
-
-  // Perfiles (para vista por persona)
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('id, name, role')
-    .order('name')
-
-  // Documentos de proveedores (para alerta de vencimiento)
-  const { data: supplierDocs } = await supabase
-    .from('supplier_documents')
-    .select(`
-      id, supplier_id, type, expires_at,
-      suppliers ( name )
-    `)
-    .not('expires_at', 'is', null)
 
   return (
     <DashboardClient

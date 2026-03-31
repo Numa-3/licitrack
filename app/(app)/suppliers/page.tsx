@@ -1,25 +1,9 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { getAuthUser } from '@/lib/supabase/server'
 import SuppliersClient from '@/components/features/SuppliersClient'
 
 export default async function SuppliersPage() {
-  const supabase = await createServerSupabaseClient()
+  const { supabase, userRole, userId } = await getAuthUser()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  // Rol del usuario
-  let userRole = 'operadora'
-  if (user) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-    if (profile) userRole = profile.role
-  }
-
-  // Proveedores activos con documentos (para badges de verificación)
   const { data: suppliers } = await supabase
     .from('suppliers')
     .select(`
@@ -35,7 +19,7 @@ export default async function SuppliersPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       suppliers={(suppliers || []) as any}
       userRole={userRole}
-      currentUserId={user?.id || ''}
+      currentUserId={userId}
     />
   )
 }

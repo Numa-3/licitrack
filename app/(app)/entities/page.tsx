@@ -1,25 +1,9 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { getAuthUser } from '@/lib/supabase/server'
 import EntitiesClient from '@/components/features/EntitiesClient'
 
 export default async function EntitiesPage() {
-  const supabase = await createServerSupabaseClient()
+  const { supabase, userRole, userId } = await getAuthUser()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  // Rol del usuario
-  let userRole = 'operadora'
-  if (user) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-    if (profile) userRole = profile.role
-  }
-
-  // Entidades activas con documentos
   const { data: entities } = await supabase
     .from('contracting_entities')
     .select(`
@@ -34,7 +18,7 @@ export default async function EntitiesPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       entities={(entities || []) as any}
       userRole={userRole}
-      currentUserId={user?.id || ''}
+      currentUserId={userId}
     />
   )
 }
