@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
       return Response.json({ items: [] })
     }
 
-    const model = process.env.LLM_MODEL || 'qwen/qwen-turbo'
+    const model = process.env.LLM_MODEL || 'qwen/qwen-plus'
 
     const categoryNames = Array.isArray(categories)
       ? categories.map((c: { name: string }) => c.name).join(', ')
@@ -23,19 +23,26 @@ export async function POST(request: NextRequest) {
       .map((d: string, i: number) => `${i + 1}. ${d}`)
       .join('\n')
 
-    const prompt = `Clasifica estos ítems de una ficha técnica de licitación pública en Colombia.
-Para cada ítem genera un nombre corto (máximo 6 palabras, para mostrar en listas) basado en la descripción.
+    const systemPrompt = `Eres un experto en licitaciones públicas colombianas. Clasificas ítems de fichas técnicas.
+Responde ÚNICAMENTE con JSON válido, sin markdown, sin texto adicional.`
+
+    const userPrompt = `Clasifica estos ${descriptions.length} ítems de una ficha técnica de licitación pública en Colombia.
+Para cada ítem genera un short_name descriptivo (máximo 6 palabras, concreto y útil para listas).
 
 Categorías disponibles: ${categoryNames}
-Tipos posibles: purchase (compra de producto), logistics (coordinación/evento), service (prestación de servicio)
+Tipos: purchase=compra de producto, logistics=coordinación/transporte/evento, service=prestación de servicio
 
 Ítems:
 ${itemsList}
 
-Responde SOLO en JSON. Formato:
-[{"item": 1, "short_name": "Cemento gris 50kg", "category": "Ferretería", "type": "purchase"}, ...]
+Responde SOLO con este JSON (un objeto por ítem, en orden):
+[{"item": 1, "short_name": "Cemento gris 50kg bolsa", "category": "Ferretería", "type": "purchase"}, ...]
 
-Si un ítem no encaja en ninguna categoría existente, sugiere una nueva con "new_category": true.`
+Reglas:
+- El array debe tener exactamente ${descriptions.length} elementos
+- "item" es el número de orden (1 al ${descriptions.length})
+- Si no encaja en ninguna categoría, usa "General"
+- No omitas ningún ítem`
 
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -45,9 +52,12 @@ Si un ítem no encaja en ninguna categoría existente, sugiere una nueva con "ne
       },
       body: JSON.stringify({
         model,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
         temperature: 0.1,
-        max_tokens: descriptions.length * 40,
+        max_tokens: Math.max(descriptions.length * 60, 500),
       }),
     })
 
@@ -57,9 +67,11 @@ Si un ítem no encaja en ninguna categoría existente, sugiere una nueva con "ne
     }
 
     const data = await res.json()
-    const content = data.choices?.[0]?.message?.content ?? ''
+    const content = ((data.choices?.[0]?.message?.content ?? '') as string)
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim()
 
-    // Extract JSON from response (may be wrapped in markdown code block)
     const jsonMatch = content.match(/\[[\s\S]*\]/)
     if (!jsonMatch) {
       console.error('Could not parse LLM response:', content)

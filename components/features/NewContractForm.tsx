@@ -275,7 +275,7 @@ export default function NewContractForm({ organizations, profiles, categories, e
       return
     }
 
-    // Auto-detect header row: find first row with at least 2 non-empty cells that match any pattern
+    // Auto-detect header row: find first row with at least 1 non-empty cell that matches any pattern
     const allPatterns = Object.values(COL_PATTERNS).flat()
     let headerRowIndex = 0
     for (let r = 0; r < Math.min(json.length, 10); r++) {
@@ -293,8 +293,83 @@ export default function NewContractForm({ organizations, profiles, categories, e
     setRawRows(rows)
 
     const detected = detectColumns(headers)
+    const detectedCount = Object.values(detected).filter(v => v !== null).length
+
+    // If regex detects fewer than 2 columns (description at minimum), use AI extraction directly
+    if (detectedCount < 2) {
+      aiExtractItems(json.filter((row) =>
+        (row as unknown[]).some((cell) => cell !== null && cell !== undefined && String(cell).trim() !== '')
+      ) as unknown[][])
+      return
+    }
+
     setMapping(detected)
     setStep('mapping')
+  }
+
+  async function aiExtractItems(rawAllRows: unknown[][]) {
+    setStep('review')
+    setClassifying(true)
+    setClassifyError(null)
+    setReviewRows([])
+
+    try {
+      const res = await fetchWithRetry('/api/extract-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows: rawAllRows.slice(0, 83),
+          categories,
+          contractType: form.type || 'mixed',
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!data.items || data.items.length === 0) {
+        setClassifyError('La IA no pudo interpretar el Excel. Ajusta las columnas manualmente.')
+        setStep('mapping')
+        setMapping({ item_number: null, description: null, unit: null, quantity: null, sale_price: null })
+        return
+      }
+
+      const defaultType = form.type === 'mixed' ? 'purchase' : (form.type as ReviewRow['type'])
+
+      const rows: ReviewRow[] = data.items.map((item: {
+        item_number?: number | null
+        description?: string
+        short_name?: string
+        unit?: string
+        quantity?: number
+        sale_price?: number
+        category?: string
+        type?: string
+      }, i: number) => {
+        const matchedCat = categories.find(
+          c => c.name.toLowerCase() === (item.category ?? '').toLowerCase()
+        )
+        return {
+          rowIndex: i,
+          item_number: item.item_number ?? null,
+          description: item.description ?? '',
+          unit: item.unit ?? '',
+          quantity: item.quantity ?? 1,
+          sale_price: item.sale_price ?? 0,
+          selected: true,
+          short_name: item.short_name ?? '',
+          category_id: matchedCat?.id ?? '',
+          type: (item.type as ReviewRow['type']) ?? defaultType,
+        }
+      })
+
+      setReviewRows(rows)
+    } catch {
+      setClassifyError('Error al procesar con IA. Ajusta las columnas manualmente.')
+      setStep('mapping')
+      setMapping({ item_number: null, description: null, unit: null, quantity: null, sale_price: null })
+    } finally {
+      setClassifying(false)
+    }
   }
 
   const handleDrop = useCallback((e: React.DragEvent) => {
