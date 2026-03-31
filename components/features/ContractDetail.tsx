@@ -217,10 +217,23 @@ export default function ContractDetail({
   const isJefe = userRole === 'jefe'
   const isActive = contract.status === 'active' || contract.status === 'draft'
 
+  // ── Search / filter ──────────────────────────────────
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const filteredItems = useMemo(() => {
+    if (!searchQuery.trim()) return items
+    const q = searchQuery.toLowerCase()
+    return items.filter(item =>
+      (item.short_name || '').toLowerCase().includes(q) ||
+      (item.description || '').toLowerCase().includes(q) ||
+      (item.item_number != null && String(item.item_number).includes(q))
+    )
+  }, [items, searchQuery])
+
   // ── Derived data ─────────────────────────────────────
   const grouped = useMemo(() => {
     const groups: Record<string, { supplier: ItemSupplier; items: Item[] }> = {}
-    for (const item of items) {
+    for (const item of filteredItems) {
       const key = item.supplier_id || '__unassigned__'
       if (!groups[key]) {
         groups[key] = { supplier: item.suppliers, items: [] }
@@ -235,7 +248,7 @@ export default function ContractDetail({
       return (aGroup.supplier?.name || '').localeCompare(bGroup.supplier?.name || '')
     })
     return entries
-  }, [items])
+  }, [filteredItems])
 
   // Margin summary
   const marginSummary = useMemo(() => {
@@ -811,24 +824,35 @@ export default function ContractDetail({
 
         {/* Items grouped by supplier */}
         <div className="bg-white border border-gray-200 rounded-xl">
-          <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <h2 className="font-semibold text-gray-900">
-                Ítems <span className="ml-1 text-sm font-normal text-gray-400">({items.length})</span>
-              </h2>
-              {isActive && (
-                <button onClick={() => setShowAddItem(true)}
-                  className="px-3 py-1 bg-gray-900 text-white rounded-lg text-xs font-medium hover:bg-gray-700 transition-colors">
-                  + Agregar ítem
-                </button>
+          <div className="px-5 py-4 border-b border-gray-200 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <h2 className="font-semibold text-gray-900">
+                  Ítems <span className="ml-1 text-sm font-normal text-gray-400">({filteredItems.length}{searchQuery ? ` de ${items.length}` : ''})</span>
+                </h2>
+                {isActive && (
+                  <button onClick={() => setShowAddItem(true)}
+                    className="px-3 py-1 bg-gray-900 text-white rounded-lg text-xs font-medium hover:bg-gray-700 transition-colors">
+                    + Agregar ítem
+                  </button>
+                )}
+              </div>
+              {items.length > 0 && (
+                <label className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer">
+                  <input type="checkbox" checked={selected.size === items.length && items.length > 0}
+                    onChange={toggleSelectAll} className="rounded border-gray-300" />
+                  Seleccionar todos
+                </label>
               )}
             </div>
-            {items.length > 0 && (
-              <label className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer">
-                <input type="checkbox" checked={selected.size === items.length && items.length > 0}
-                  onChange={toggleSelectAll} className="rounded border-gray-300" />
-                Seleccionar todos
-              </label>
+            {items.length > 5 && (
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Buscar item por nombre, descripcion o numero..."
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-300 placeholder:text-gray-400"
+              />
             )}
           </div>
 
