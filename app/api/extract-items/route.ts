@@ -28,10 +28,24 @@ export async function POST(request: NextRequest) {
       ? categories.map(c => c.name).join(', ')
       : 'Ferretería, Tecnología, Papelería, Aseo, Investigación, Evento, Transporte, Alojamiento, Mantenimiento, Fumigación, General'
 
-    // Limit rows to avoid token overload: first 3 rows as headers sample + up to 80 data rows
-    const sampleRows = rows.slice(0, 83)
-    const rowsText = sampleRows
-      .map((row, i) => `Fila ${i}: ${JSON.stringify(row)}`)
+    // Strip empty columns: find which column indices have at least one non-empty value
+    const maxCols = Math.max(...rows.map(r => (r as unknown[]).length))
+    const usedCols: number[] = []
+    for (let c = 0; c < maxCols; c++) {
+      const hasValue = rows.some(r => {
+        const v = (r as unknown[])[c]
+        return v !== null && v !== undefined && String(v).trim() !== ''
+      })
+      if (hasValue) usedCols.push(c)
+    }
+
+    // Compact rows: keep only non-empty columns, drop fully empty rows
+    const compactRows = rows.slice(0, 83)
+      .map(r => usedCols.map(c => (r as unknown[])[c] ?? null))
+      .filter(r => r.some(v => v !== null && String(v).trim() !== ''))
+
+    const rowsText = compactRows
+      .map((row, i) => `${i}: ${JSON.stringify(row)}`)
       .join('\n')
 
     const systemPrompt = `Eres un experto en fichas técnicas de licitaciones públicas colombianas (SENA, ICBF, Gobernación, Alcaldías, Ministerios).
@@ -80,7 +94,7 @@ Tipos: purchase=compra de producto, logistics=coordinación/transporte/evento, s
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.1,
-        max_tokens: rows.length * 80 + 500,
+        max_tokens: compactRows.length * 80 + 500,
       }),
     })
 

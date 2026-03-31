@@ -13,14 +13,20 @@ export async function POST(request: NextRequest) {
       return Response.json({ items: [] })
     }
 
-    const model = process.env.LLM_MODEL || 'qwen/qwen-plus'
+    // Classification is a simpler task — use a lighter model
+    const model = process.env.LLM_MODEL_LIGHT || 'qwen/qwen-turbo'
 
     const categoryNames = Array.isArray(categories)
       ? categories.map((c: { name: string }) => c.name).join(', ')
       : 'Ferretería, Tecnología, Papelería, Aseo, Investigación, Evento, Transporte, Alojamiento, Mantenimiento, Fumigación, General'
 
+    // Truncate to 200 chars per item — enough for classification, saves ~60% tokens
+    // Full descriptions remain untouched in the client/DB
     const itemsList = descriptions
-      .map((d: string, i: number) => `${i + 1}. ${d}`)
+      .map((d: string, i: number) => {
+        const trimmed = d.length > 200 ? d.slice(0, 200) + '...' : d
+        return `${i + 1}. ${trimmed}`
+      })
       .join('\n')
 
     const systemPrompt = `Eres un experto en licitaciones públicas colombianas. Clasificas ítems de fichas técnicas.
