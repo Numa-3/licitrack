@@ -46,7 +46,19 @@ const CONTRACT_TYPES = [
   { value: 'mixed', label: 'Mixto', description: 'Combinacion de tipos' },
 ]
 
-// ── Parse TSV from clipboard paste ────────────────────────────
+// ── Parse HTML table from Excel clipboard ─────────────────────
+function parseHTMLTable(html: string): string[][] {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, 'text/html')
+  const rows = Array.from(doc.querySelectorAll('tr'))
+  if (rows.length === 0) return []
+
+  return rows
+    .map(tr => Array.from(tr.querySelectorAll('td, th')).map(td => td.textContent?.trim() ?? ''))
+    .filter(r => r.some(cell => cell !== ''))
+}
+
+// ── Parse TSV fallback ─────────────────────────────────────────
 function parseTSV(text: string): string[][] {
   const lines = text.split(/\r?\n/).filter(l => l.trim() !== '')
   if (lines.length === 0) return []
@@ -473,6 +485,15 @@ export default function NewContractForm({ organizations, profiles, categories, e
             onChange={e => handlePaste(e.target.value)}
             onPaste={e => {
               e.preventDefault()
+              const html = e.clipboardData.getData('text/html')
+              if (html) {
+                const rows = parseHTMLTable(html)
+                if (rows.length > 0) {
+                  setPastePreview(rows)
+                  setPasteText(`[Tabla HTML: ${rows.length} filas × ${rows[0].length} columnas]`)
+                  return
+                }
+              }
               const text = e.clipboardData.getData('text/plain')
               handlePaste(text)
             }}
