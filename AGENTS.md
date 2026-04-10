@@ -58,4 +58,16 @@ Antes de proponer o instalar cualquier paquete npm, verificar explícitamente:
 - No usar `'use server'` / Server Actions — la arquitectura usa API routes para mutaciones
 - No crear un archivo de tipos compartidos si no existe — usar tipos inline por componente
 - Leer el código existente antes de proponer cualquier patrón nuevo
+---
+
+## Diseño UI — workflow obligatorio
+
+- **Siempre leer `DESIGN.md`** antes de tocar cualquier componente de UI o crear uno nuevo
+- El sistema de diseño es Linear-inspired: sidebar `#111216`, workspace `#FAFAFA`, tipografía Inter/Geist, pills con `ring-1 ring-inset`, sombras sutiles
+- **AIDesigner MCP** está conectado (`aidesigner` en `.mcp.json`). Usarlo para generar mockups de páginas nuevas o rediseños — leer `DESIGN.md` como `repo_context`
+- Después de cada generación: capturar con `@aidesigner/agent-skills capture`, luego implementar en React/Tailwind con datos reales
+- **Iconos**: Lucide React (ya instalado) — no instalar otras librerías de íconos
+- **No inventar estilos** fuera del sistema definido en `DESIGN.md`
+- El orden de referencia para cualquier tarea frontend: `DESIGN.md` → código existente → implementar
+
 <!-- END:nextjs-agent-rules -->

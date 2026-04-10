@@ -26,12 +26,12 @@ export default async function AppLayout({
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: '#FAFAFA' }}>
       <ConnectionBanner />
       <Sidebar profile={profile} />
 
       {/* Contenido principal */}
-      <main className="flex-1 overflow-auto pt-14 md:pt-0">
+      <main className="flex-1 overflow-y-auto pt-14 md:pt-0 flex flex-col">
         {children}
       </main>
     </div>

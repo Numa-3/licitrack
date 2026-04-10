@@ -51,7 +51,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Aplica a todas las rutas excepto archivos estáticos y assets de Next.js
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Aplica a todas las rutas excepto archivos estáticos, assets de Next.js y cron endpoints
+    '/((?!_next/static|_next/image|favicon.ico|api/cron|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

@@ -1,7 +1,7 @@
 # LiciTrack — Backlog
 
 Fuente única de verdad para todo lo pendiente: mejoras a lo existente y features nuevas.
-Última actualización: 2026-03-27
+Última actualización: 2026-04-04
 
 ---
 
@@ -72,6 +72,13 @@ Funcionalidades que no existen todavía.
 - Vista consolidada de todas las tareas pendientes del equipo, filtrable por contrato/responsable/fecha
 - Notificaciones cuando una tarea está próxima a vencer
 - Requiere nueva tabla: `contract_tasks` (contract_id, assigned_to, description, due_date, status, created_by)
+
+#### Integración con API SECOP 2
+- Conectar LiciTrack con la API pública de Colombia Compra Eficiente (SECOP 2) para consumir datos de contratación estatal
+- **Oportunidades**: buscar y filtrar procesos de contratación abiertos relevantes al perfil del equipo
+- **Seguimiento**: cruzar contratos existentes en LiciTrack con sus registros en SECOP 2 (estado, documentos publicados, adendas)
+- Por qué: el equipo hoy entra manualmente a SECOP; centralizar la consulta ahorra tiempo y evita que se pierdan oportunidades o actualizaciones
+- Consideraciones técnicas: API pública en `https://www.datos.gov.co/resource/...` (SODA API); autenticación con app token; definir qué entidades/estados monitorear; posible webhook o polling periódico para detectar cambios
 
 #### Importación masiva de proveedores desde Excel
 - Subir `.xlsx` → mapeo de columnas → clasificación con IA en batch

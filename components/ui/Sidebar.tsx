@@ -11,12 +11,15 @@ import {
   FilePlus,
   Truck,
   Activity,
+  Eye,
   Building2,
   Users,
   Landmark,
   Receipt,
+  Radar,
   Settings,
   Menu,
+  ChevronRight,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -52,6 +55,13 @@ const navSections: NavSection[] = [
     ],
   },
   {
+    label: 'SECOP',
+    items: [
+      { href: '/secop/radar', label: 'Radar', icon: Radar },
+      { href: '/secop/seguimiento', label: 'Seguimiento', icon: Eye },
+    ],
+  },
+  {
     label: 'Sistema',
     items: [
       { href: '/activity', label: 'Actividad', icon: Activity },
@@ -63,6 +73,10 @@ type Props = {
   profile: { name: string; role: string } | null
 }
 
+function getInitials(name: string): string {
+  return name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
+}
+
 // ── Sidebar ───────────────────────────────────────────────────
 export default function Sidebar({ profile }: Props) {
   const [open, setOpen] = useState(false)
@@ -71,24 +85,29 @@ export default function Sidebar({ profile }: Props) {
   return (
     <>
       {/* Mobile header bar */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-slate-900 flex items-center px-4 z-50">
+      <div className="md:hidden fixed top-0 left-0 right-0 h-14 flex items-center px-4 z-50 border-b"
+        style={{ backgroundColor: '#111216', borderColor: '#2A2B30' }}>
         <button onClick={() => setOpen(true)} className="p-2 -ml-2 text-slate-400 hover:text-white rounded-lg transition-colors">
           <Menu size={22} />
         </button>
-        <h1 className="text-lg font-bold text-white ml-3">LiciTrack</h1>
+        <div className="flex items-center ml-3 gap-2">
+          <div className="w-5 h-5 rounded bg-indigo-500 text-white flex items-center justify-center font-bold text-[10px]">L</div>
+          <h1 className="text-sm font-semibold text-white">LiciTrack</h1>
+        </div>
       </div>
 
       {/* Mobile overlay */}
       {open && (
         <div className="md:hidden fixed inset-0 bg-black/60 z-50" onClick={() => setOpen(false)}>
-          <aside className="w-64 h-full bg-slate-900 flex flex-col" onClick={e => e.stopPropagation()}>
+          <aside className="w-[260px] h-full flex flex-col" style={{ backgroundColor: '#111216' }} onClick={e => e.stopPropagation()}>
             <SidebarContent profile={profile} pathname={pathname} onNavigate={() => setOpen(false)} />
           </aside>
         </div>
       )}
 
       {/* Desktop sidebar */}
-      <aside className="hidden md:flex w-64 bg-slate-900 flex-col shrink-0">
+      <aside className="hidden md:flex w-[260px] flex-col shrink-0 border-r"
+        style={{ backgroundColor: '#111216', borderColor: '#2A2B30' }}>
         <SidebarContent profile={profile} pathname={pathname} />
       </aside>
     </>
@@ -103,35 +122,53 @@ function SidebarContent({ profile, pathname, onNavigate }: {
 }) {
   return (
     <>
-      {/* Logo */}
-      <div className="px-5 py-6">
-        <h1 className="text-xl font-bold text-white tracking-tight">LiciTrack</h1>
-        <p className="text-xs text-slate-500 mt-0.5">Gestion de licitaciones</p>
+      {/* Workspace header */}
+      <div className="h-14 flex items-center px-4 border-b shrink-0 gap-3"
+        style={{ borderColor: '#2A2B30' }}>
+        <div className="w-6 h-6 rounded bg-indigo-500 text-white flex items-center justify-center font-bold text-xs shrink-0">
+          L
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-white leading-none">LiciTrack</p>
+          <p className="text-[11px] mt-0.5 truncate" style={{ color: '#6B7280' }}>Leticia, Amazonas</p>
+        </div>
+        <ChevronRight size={14} className="text-slate-600 shrink-0" />
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 space-y-6 overflow-y-auto">
+      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-5"
+        style={{ scrollbarWidth: 'thin', scrollbarColor: '#374151 transparent' }}>
         {navSections.map(section => (
           <div key={section.label}>
-            <p className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            <p className="px-3 mb-1.5 text-[11px] font-semibold uppercase tracking-widest" style={{ color: '#4B5563' }}>
               {section.label}
             </p>
             <div className="space-y-0.5">
               {section.items.map(item => {
-                const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
+                const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href + '/'))
                 const Icon = item.icon
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
                     onClick={onNavigate}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    className={`relative flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors ${
                       isActive
-                        ? 'bg-slate-800 text-white font-medium'
-                        : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                        ? 'text-white font-medium'
+                        : 'hover:text-slate-200'
                     }`}
+                    style={{
+                      backgroundColor: isActive ? '#24252A' : undefined,
+                      color: isActive ? '#fff' : '#9CA3AF',
+                    }}
+                    onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = '#1E1F24' }}
+                    onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
                   >
-                    <Icon size={18} strokeWidth={isActive ? 2 : 1.5} />
+                    {isActive && (
+                      <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[3px] bg-indigo-500 rounded-r-full"
+                        style={{ boxShadow: '0 0 8px rgba(99,102,241,0.6)' }} />
+                    )}
+                    <Icon size={16} strokeWidth={isActive ? 2 : 1.5} className={isActive ? 'text-indigo-400' : ''} />
                     <span>{item.label}</span>
                   </Link>
                 )
@@ -143,19 +180,25 @@ function SidebarContent({ profile, pathname, onNavigate }: {
         {/* Admin — jefe only */}
         {profile?.role === 'jefe' && (
           <div>
-            <p className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            <p className="px-3 mb-1.5 text-[11px] font-semibold uppercase tracking-widest" style={{ color: '#4B5563' }}>
               Admin
             </p>
             <Link
               href="/admin"
               onClick={onNavigate}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                pathname === '/admin'
-                  ? 'bg-slate-800 text-white font-medium'
-                  : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
-              }`}
+              className="relative flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors"
+              style={{
+                backgroundColor: pathname === '/admin' ? '#24252A' : undefined,
+                color: pathname === '/admin' ? '#fff' : '#9CA3AF',
+              }}
+              onMouseEnter={e => { if (pathname !== '/admin') (e.currentTarget as HTMLElement).style.backgroundColor = '#1E1F24' }}
+              onMouseLeave={e => { if (pathname !== '/admin') (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
             >
-              <Settings size={18} strokeWidth={pathname === '/admin' ? 2 : 1.5} />
+              {pathname === '/admin' && (
+                <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[3px] bg-indigo-500 rounded-r-full"
+                  style={{ boxShadow: '0 0 8px rgba(99,102,241,0.6)' }} />
+              )}
+              <Settings size={16} strokeWidth={pathname === '/admin' ? 2 : 1.5} className={pathname === '/admin' ? 'text-indigo-400' : ''} />
               <span>Administracion</span>
             </Link>
           </div>
@@ -163,15 +206,20 @@ function SidebarContent({ profile, pathname, onNavigate }: {
       </nav>
 
       {/* Profile & logout */}
-      <div className="p-4 border-t border-slate-800 space-y-3">
+      <div className="p-3 border-t shrink-0" style={{ borderColor: '#2A2B30' }}>
         {profile && (
-          <div>
-            <p className="text-sm font-medium text-slate-200 truncate">{profile.name}</p>
-            <p className="text-xs text-slate-500 capitalize">{profile.role}</p>
+          <div className="flex items-center gap-3 px-2 py-2 rounded-md mb-2"
+            style={{ backgroundColor: 'transparent' }}>
+            <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
+              {getInitials(profile.name)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white truncate">{profile.name}</p>
+              <p className="text-xs capitalize truncate" style={{ color: '#6B7280' }}>{profile.role}</p>
+            </div>
           </div>
         )}
         <LogoutButton />
-        <p className="text-[11px] text-slate-600">Leticia, Amazonas</p>
       </div>
     </>
   )
