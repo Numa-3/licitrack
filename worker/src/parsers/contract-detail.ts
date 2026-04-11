@@ -27,50 +27,43 @@ function inputVal($: cheerio.CheerioAPI, selector: string): string | null {
   return s || null
 }
 
-// ── Tab 1: Información general ──────────────────────────────
+// ── Tab 2 (stepDiv_2): Información general ──────────────────
 
 export function parseInfoGeneral(html: string): InfoGeneral {
   const $ = cheerio.load(html)
 
   return {
     estado: text($, '#spnContractState'),
-    referencia: inputVal($, '#txtContractReference1Gen') || text($, '#spnContractReferenceGen'),
-    descripcion: inputVal($, '#txaContractDescription1Gen') || text($, '#spnContractDescriptionGen'),
-    unique_id: text($, '#spnContractUniqueIdentifierGen'),
-    version: text($, '#spnContractVersionGen'),
+    referencia: text($, '#txtContractReference1Gen'),
+    descripcion: text($, '#txaContractDescription1Gen'),
+    unique_id: text($, '#spnContractUniqueIdentifier'),
+    version: text($, '#spnContractVersion'),
     valor: text($, '#cbxContractValue1Gen'),
-    fecha_inicio: inputVal($, '#dtmbContractStartDate_txt'),
-    fecha_fin: inputVal($, '#dtmbContractEndDate_txt'),
-    fecha_liquidacion_inicio: inputVal($, '#dtmbLiquidationStartDateValue_txt'),
-    fecha_liquidacion_fin: inputVal($, '#dtmbLiquidationEndDateValue_txt'),
+    fecha_inicio: text($, '#dtmbContractStartDate_txt'),
+    fecha_fin: text($, '#dtmbContractEndDate_txt'),
+    fecha_liquidacion_inicio: text($, '#dtmbLiquidationStartDateValue_txt'),
+    fecha_liquidacion_fin: text($, '#dtmbLiquidationEndDateValue_txt'),
     proveedor: text($, '#lblSupplierName'),
-    aprobacion_comprador: inputVal($, '#dtmbBuyerApprovalDateTimeBox_txt'),
-    aprobacion_proveedor: inputVal($, '#dtmbSupplierApprovalDateTimeBox_txt'),
+    aprobacion_comprador: text($, '#dtmbBuyerApprovalDateTimeBox_txt'),
+    aprobacion_proveedor: text($, '#dtmbSupplierApprovalDateTimeBox_txt'),
   }
 }
 
-// ── Tab 2: Condiciones ──────────────────────────────────────
+// ── Tab 3 (stepDiv_3): Condiciones ──────────────────────────
 
 export function parseCondiciones(html: string): Condiciones {
   const $ = cheerio.load(html)
 
-  // These fields live in fdsFinancialAndDeliveryConditionsP2Gen table rows
-  const renewableRow = $('[id*="RenewableContractRow"]')
-  const renewalDateRow = $('[id*="ContractRenewalDateRow"]')
-  const paymentMethodRow = $('[id*="PaymentMethodRow"]')
-  const paymentTermRow = $('[id*="PaymentTermRow"]')
-  const deliveryRow = $('[id*="DeliveryOptionsRow"]')
-
   return {
-    renovable: renewableRow.find('span, select').first().text().trim() || null,
-    fecha_renovacion: renewalDateRow.find('input[id*="_txt"]').val()?.toString().trim() || null,
-    metodo_pago: paymentMethodRow.find('span').first().text().trim() || null,
-    plazo_pago: paymentTermRow.find('span').first().text().trim() || null,
-    opciones_entrega: deliveryRow.find('span').first().text().trim() || null,
+    renovable: text($, '#selBreakableContract') || text($, '#rdbgBreakableContractValue input:checked + label'),
+    fecha_renovacion: text($, '#dtmbContractBreakingDate_txt') || text($, '#dtmbContractRenewalDate_txt'),
+    metodo_pago: text($, '#selPaymentMethod'),
+    plazo_pago: text($, '#selPaymentTerm'),
+    opciones_entrega: text($, '#selIncoterm'),
   }
 }
 
-// ── Tab 3: Bienes y servicios ───────────────────────────────
+// ── Tab 4 (stepDiv_4): Bienes y servicios ───────────────────
 
 export function parseBienesServicios(html: string): BienesServicios {
   const $ = cheerio.load(html)
@@ -82,7 +75,7 @@ export function parseBienesServicios(html: string): BienesServicios {
   return { item_count: items.length }
 }
 
-// ── Tab 4: Documentos del proveedor ─────────────────────────
+// ── Tab 5 (stepDiv_5): Documentos del proveedor ─────────────
 
 export function parseDocsProveedor(html: string): DocProveedor {
   const $ = cheerio.load(html)
@@ -95,36 +88,24 @@ export function parseDocsProveedor(html: string): DocProveedor {
   return { document_names: names }
 }
 
-// ── Tab 5: Documentos del contrato ──────────────────────────
+// ── Tab 6 (stepDiv_6): Documentos del contrato ──────────────
 
 export function parseDocsContrato(html: string): DocContrato {
   const $ = cheerio.load(html)
   const documents: { name: string; description: string }[] = []
 
-  // grdContractDocument grid — rows are grdContractDocument_tr0, tr1, etc.
-  // Each row has lnkDownloadDocument_N for filename
-  const grid = $('#grdContractDocument_tbl')
-  grid.find('tr[id*="grdContractDocument_tr"]').each((i, row) => {
-    const $row = $(row)
-    const name = $row.find(`#lnkDownloadDocument_${i}`).text().trim()
-    const desc = $row.find(`td[id*="thDescriptionCol"]`).text().trim()
-    if (name) {
-      documents.push({ name, description: desc })
-    }
-  })
-
-  // Fallback: find all download links if grid wasn't found
-  if (documents.length === 0) {
-    $('a[id^="lnkDownloadDocument_"]').each((_, el) => {
-      const name = $(el).text().trim()
-      if (name) documents.push({ name, description: '' })
-    })
+  // Contract documents — lnkDownloadDocument_N for filename, lblDescription_N for description
+  for (let i = 0; i < 50; i++) {
+    const name = text($, `#lnkDownloadDocument_${i}`)
+    if (!name) break
+    const desc = text($, `[id$="lblDescription_${i}"]`) || ''
+    documents.push({ name, description: desc })
   }
 
   return { documents }
 }
 
-// ── Tab 6: Información presupuestal ─────────────────────────
+// ── Tab 7 (stepDiv_7): Información presupuestal ─────────────
 
 export function parsePresupuestal(html: string): Presupuestal {
   const $ = cheerio.load(html)
@@ -136,7 +117,7 @@ export function parsePresupuestal(html: string): Presupuestal {
   }
 }
 
-// ── Tab 7: Ejecución del contrato ───────────────────────────
+// ── Tab 8 (stepDiv_8): Ejecución del contrato ───────────────
 
 export function parseEjecucion(html: string): Ejecucion {
   const $ = cheerio.load(html)
@@ -154,25 +135,18 @@ export function parseEjecucion(html: string): Ejecucion {
     })
   }
 
-  // Execution documents
+  // Execution documents — file names are in lblExecutionFileName_N labels
   const execution_docs: string[] = []
-  $('a[id*="lnkDownloadExecutionDocument"], #grdContractExecutionDocument_tbl a[id*="Download"]').each((_, el) => {
-    const name = $(el).text().trim()
-    if (name) execution_docs.push(name)
-  })
-
-  // Fallback: execution document filenames from grid
-  if (execution_docs.length === 0) {
-    $('#grdContractExecutionDocument_tbl td[id*="ExecutionFileNameCol"]').each((_, el) => {
-      const name = $(el).text().trim()
-      if (name) execution_docs.push(name)
-    })
+  for (let i = 0; i < 100; i++) {
+    const name = text($, `#lblExecutionFileName_${i}`)
+    if (!name) break
+    execution_docs.push(name)
   }
 
   return { pagos, execution_docs }
 }
 
-// ── Tab 8: Modificaciones del contrato ──────────────────────
+// ── Tab 9 (stepDiv_9): Modificaciones del contrato ──────────
 
 export function parseModificaciones(html: string): Modificaciones {
   const $ = cheerio.load(html)
@@ -185,16 +159,16 @@ export function parseModificaciones(html: string): Modificaciones {
     entries.push({
       tipo,
       estado: text($, `#spnModificationStatusValue_${i}`),
-      fecha: inputVal($, `#dtmbModificationDateValue_${i}_txt`),
-      fecha_aprobacion: inputVal($, `#dtmbModificationApprovalDateValue_${i}_txt`),
-      version: text($, `#spnModificationVersionSpan_${i}`),
+      fecha: text($, `#dtmbModificationDateValue_${i}_txt`),
+      fecha_aprobacion: text($, `#dtmbModificationApprovalDateValue_${i}_txt`),
+      version: text($, `#spnModificationVersionValue_${i}`),
     })
   }
 
   return { entries }
 }
 
-// ── Tab 9: Incumplimientos ──────────────────────────────────
+// ── Tab 10 (stepDiv_10): Incumplimientos ────────────────────
 
 export function parseIncumplimientos(html: string): Incumplimientos {
   const $ = cheerio.load(html)

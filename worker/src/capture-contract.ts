@@ -20,16 +20,18 @@ import { getValidSession } from './session.js'
 import { loginAccount } from './login.js'
 import { SECOP } from './config.js'
 
+// SECOP uses 10 stepDivs. stepDiv_1 = "Modificación pendiente" (notification, skip).
+// Actual content tabs: stepDiv_2 through stepDiv_10.
 const TABS = [
-  { num: 1, name: 'Información general',       slug: 'info-general' },
-  { num: 2, name: 'Condiciones',               slug: 'condiciones' },
-  { num: 3, name: 'Bienes y servicios',        slug: 'bienes-servicios' },
-  { num: 4, name: 'Documentos del Proveedor',  slug: 'docs-proveedor' },
-  { num: 5, name: 'Documentos del contrato',   slug: 'docs-contrato' },
-  { num: 6, name: 'Información presupuestal',  slug: 'presupuestal' },
-  { num: 7, name: 'Ejecución del Contrato',    slug: 'ejecucion' },
-  { num: 8, name: 'Modificaciones del Contrato', slug: 'modificaciones' },
-  { num: 9, name: 'Incumplimientos',           slug: 'incumplimientos' },
+  { num: 2,  name: 'Información general',        slug: 'info-general' },
+  { num: 3,  name: 'Condiciones',                slug: 'condiciones' },
+  { num: 4,  name: 'Bienes y servicios',         slug: 'bienes-servicios' },
+  { num: 5,  name: 'Documentos del Proveedor',   slug: 'docs-proveedor' },
+  { num: 6,  name: 'Documentos del contrato',    slug: 'docs-contrato' },
+  { num: 7,  name: 'Información presupuestal',   slug: 'presupuestal' },
+  { num: 8,  name: 'Ejecución del Contrato',     slug: 'ejecucion' },
+  { num: 9,  name: 'Modificaciones del Contrato', slug: 'modificaciones' },
+  { num: 10, name: 'Incumplimientos',            slug: 'incumplimientos' },
 ]
 
 const OUTPUT_DIR = '/tmp/secop-capture'
