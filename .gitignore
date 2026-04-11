@@ -41,3 +41,8 @@ yarn-error.log*
 next-env.d.ts
 .aidesigner/*
 !.aidesigner/.gitkeep
+
+# Local IDE / AI tooling
+.agents/
+.claude/
+*.har
