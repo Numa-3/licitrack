@@ -80,49 +80,52 @@ export async function discoverProcesses(accountId: string, entityName?: string):
       if (company) {
         console.log(`[Discovery] Switching to: ${company.name} (${company.value})`)
 
-        // Use Playwright's selectOption which properly triggers jQuery/VORTAL event handlers
-        await page.selectOption('#companiesSelector', company.value)
+        // Navigate directly to SwitchCompany URL — this is what SECOP does
+        // when you select a company from the dropdown. The selectOption approach
+        // doesn't trigger the full redirect chain reliably.
+        const switchUrl = `${SECOP.switchCompanyUrl}?companyCode=${company.value}`
+        await page.goto(switchUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
 
-        // Wait for navigation to complete (SwitchCompany → ReloadSession → back)
-        // ReloadSession.aspx loads 2 invisible images to refresh each SECOP module's session,
-        // then after 5s redirects to CO1Marketplace. Total wait: ~10-15s.
-        // Wait for final redirect to complete.
+        // SwitchCompany redirects to ReloadSession → issue.aspx → Marketplace
+        // Wait for the chain to finish (up to 20s)
         try {
           await page.waitForURL(
-            url => !url.toString().includes('ReloadSession') && !url.toString().includes('SwitchCompany'),
-            { timeout: 25_000 }
+            url => {
+              const u = url.toString()
+              return !u.includes('ReloadSession') && !u.includes('SwitchCompany') && !u.includes('issue.aspx')
+            },
+            { timeout: 20_000 }
           )
         } catch {
-          // If still on ReloadSession after timeout, navigate to contracts directly
-          // (the session images already loaded, so the session IS updated)
-          console.log(`[Discovery] ReloadSession timeout — navigating to contracts directly`)
+          console.log(`[Discovery] Redirect chain timeout — continuing`)
         }
 
-        // Ensure we're on the contracts page (not Marketplace)
-        if (!page.url().includes('SalesContractManagement')) {
-          await page.goto(SECOP.contractsUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 })
-        }
+        // Now navigate to contracts page fresh with the new company context
+        await page.goto(SECOP.contractsUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+        await page.waitForTimeout(3_000)
 
-        console.log(`[Discovery] Company switched to ${company.name}, page: ${page.url().slice(0, 80)}`)
+        // Verify which company is active
+        const activeCompany = await page.evaluate(() => {
+          const sel = document.querySelector('#companiesSelector') as HTMLSelectElement | null
+          if (!sel) return null
+          const opt = sel.options[sel.selectedIndex]
+          return opt ? (opt.getAttribute('title') || opt.textContent || '').trim() : null
+        })
+        console.log(`[Discovery] Active company: ${activeCompany}`)
+
+        if (activeCompany && !activeCompany.toUpperCase().includes(entityName!.toUpperCase())) {
+          console.warn(`[Discovery] WARNING: Expected ${entityName} but got ${activeCompany}`)
+        }
       } else {
         console.warn(`[Discovery] Company "${entityName}" not found in selector`)
       }
     }
 
-    // Step 3: Load ALL contracts — click "Todos" tab then "Ver más" until exhausted
-    // SECOP shows 5 contracts per page. "Ver más" loads more via AJAX (postAction).
-
-    // Click "Todos" (All) folder tab
-    const allTab = page.locator('a:has-text("Todos"), #lnkLinkTopAll')
-    if (await allTab.count() > 0) {
-      const resp = page.waitForResponse(
-        (r: { url: () => string }) => r.url().includes('/Folder'),
-        { timeout: 10_000 }
-      ).catch(() => null)
-      await allTab.first().click()
-      await resp
-      await page.waitForTimeout(1_500)
-    }
+    // Step 3: Load ALL contracts from "Últimas modificaciones" (default tab).
+    // IMPORTANT: Do NOT click "Todos" — that tab ignores the company filter
+    // and shows the same contracts for all entities. "Últimas modificaciones"
+    // correctly filters by the selected company.
+    // Click "Ver más" repeatedly to load all pages.
 
     // Click "Ver más" repeatedly to load all pages
     let verMasClicks = 0
