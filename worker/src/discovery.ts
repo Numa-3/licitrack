@@ -1,7 +1,7 @@
 import { admin } from './db.js'
-import { config, SECOP } from './config.js'
+import { config, SECOP, USER_AGENT } from './config.js'
 import { getValidSession, invalidateSession, type CookieEntry } from './session.js'
-import { parseDashboard, parseCompanyList, extractMkey, type DiscoveredProcess } from './parsers/dashboard.js'
+import { parseDashboard, type DiscoveredProcess } from './parsers/dashboard.js'
 import { chromium } from 'playwright'
 
 /**
@@ -25,7 +25,7 @@ export async function discoverProcesses(accountId: string, entityName?: string):
   // Launch headless browser with the saved session cookies
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+    userAgent: USER_AGENT,
   })
 
   // Load saved cookies into browser context
@@ -235,18 +235,4 @@ async function upsertContract(proc: DiscoveredProcess, accountId: string, entity
 
   if (error) throw new Error(error.message)
   return true
-}
-
-/**
- * Find a company entry by name (case-insensitive partial match).
- */
-function findCompany(companies: { name: string; value: string }[], entityName: string) {
-  const target = entityName.toUpperCase().trim()
-  const exact = companies.find(c => c.name.toUpperCase() === target)
-  if (exact) return exact
-  return (
-    companies.find(c => c.name.toUpperCase().includes(target)) ??
-    companies.find(c => target.includes(c.name.toUpperCase().substring(0, 12))) ??
-    null
-  )
 }

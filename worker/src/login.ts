@@ -32,7 +32,7 @@ export async function loginAccount(accountId: string, entityOverride?: string): 
   // Entity selection is NOT needed during login — the SECOP company selector is post-login.
   // Company switching uses SwitchCompany?companyCode=XXX after a single login.
   const password = decrypt(account.password_encrypted)
-  console.log(`[Login] Logging in as ${account.username} (${account.name})... pwd_len=${password.length}`)
+  console.log(`[Login] Logging in as ${account.username} (${account.name})...`)
 
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext()

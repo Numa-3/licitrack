@@ -18,7 +18,7 @@ import { writeFileSync, mkdirSync, readdirSync, statSync } from 'fs'
 import { admin } from './db.js'
 import { getValidSession } from './session.js'
 import { loginAccount } from './login.js'
-import { SECOP } from './config.js'
+import { SECOP, USER_AGENT } from './config.js'
 
 // SECOP uses 10 stepDivs. stepDiv_1 = "Modificación pendiente" (notification, skip).
 // Actual content tabs: stepDiv_2 through stepDiv_10.
@@ -82,7 +82,7 @@ async function main() {
   // 3. Launch browser with cookies (visible for debugging)
   const browser = await chromium.launch({ headless: false })
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+    userAgent: USER_AGENT,
   })
 
   const playwrightCookies = session.cookies.map(c => ({

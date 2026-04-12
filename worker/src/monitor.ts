@@ -1,6 +1,6 @@
 import { chromium, type Page, type BrowserContext } from 'playwright'
 import { admin } from './db.js'
-import { config, SECOP } from './config.js'
+import { config, SECOP, USER_AGENT } from './config.js'
 import { getValidSession, invalidateSession, type CookieEntry } from './session.js'
 import { loginAccount } from './login.js'
 import {
@@ -102,7 +102,7 @@ export async function runMonitorCycle(): Promise<{
       // Launch ONE browser per account
       const browser = await chromium.launch({ headless: true })
       const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+        userAgent: USER_AGENT,
       })
 
       await context.addCookies(session.cookies.map(c => ({
@@ -379,7 +379,8 @@ async function monitorProcess(
       after_json: c.after_json,
       summary: c.summary,
     }))
-    await admin.from('secop_process_changes').insert(changeRows)
+    const { error: insertError } = await admin.from('secop_process_changes').insert(changeRows)
+    if (insertError) console.error(`[Monitor] Failed to save changes for ${proc.secop_process_id}:`, insertError.message)
   }
 
   // Update process with monitoring data
