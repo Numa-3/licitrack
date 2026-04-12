@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import LogoutButton from './LogoutButton'
+import NotificationPanel from '@/components/features/NotificationPanel'
 import {
   LayoutDashboard,
   ClipboardList,
@@ -20,6 +21,7 @@ import {
   Settings,
   Menu,
   ChevronRight,
+  Bell,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -205,6 +207,9 @@ function SidebarContent({ profile, pathname, onNavigate }: {
         )}
       </nav>
 
+      {/* Notification Bell */}
+      <NotificationBell />
+
       {/* Profile & logout */}
       <div className="p-3 border-t shrink-0" style={{ borderColor: '#2A2B30' }}>
         {profile && (
@@ -221,6 +226,55 @@ function SidebarContent({ profile, pathname, onNavigate }: {
         )}
         <LogoutButton />
       </div>
+    </>
+  )
+}
+
+// ── Notification Bell ─────────────────────────────────────────
+function NotificationBell() {
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [showPanel, setShowPanel] = useState(false)
+
+  const fetchCount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/notifications?unread_only=true&limit=0')
+      if (res.ok) {
+        const json = await res.json()
+        setUnreadCount(json.unread_count || 0)
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    fetchCount()
+    const interval = setInterval(fetchCount, 60_000)
+    return () => clearInterval(interval)
+  }, [fetchCount])
+
+  return (
+    <>
+      <div className="px-3 pb-1 border-t pt-2" style={{ borderColor: '#2A2B30' }}>
+        <button
+          onClick={() => setShowPanel(true)}
+          className="relative flex items-center gap-2.5 w-full px-3 py-1.5 rounded-md text-sm transition-colors"
+          style={{ color: '#9CA3AF' }}
+          onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#1E1F24')}
+          onMouseLeave={e => (e.currentTarget.style.backgroundColor = '')}
+        >
+          <Bell size={16} strokeWidth={1.5} />
+          <span>Notificaciones</span>
+          {unreadCount > 0 && (
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
+        </button>
+      </div>
+      <NotificationPanel
+        open={showPanel}
+        onClose={() => setShowPanel(false)}
+        onCountChange={setUnreadCount}
+      />
     </>
   )
 }

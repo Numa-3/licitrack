@@ -19,14 +19,29 @@ export async function GET(
   const limit = Math.min(Number(searchParams.get('limit')) || 20, 100)
   const offset = Number(searchParams.get('offset')) || 0
 
-  const { data, error, count } = await supabase
-    .from('secop_process_changes')
-    .select('*', { count: 'exact' })
-    .eq('process_id', id)
-    .order('detected_at', { ascending: false })
-    .range(offset, offset + limit - 1)
+  const [{ data, error, count }, { data: snapshots }] = await Promise.all([
+    supabase
+      .from('secop_process_changes')
+      .select('*', { count: 'exact' })
+      .eq('process_id', id)
+      .order('detected_at', { ascending: false })
+      .range(offset, offset + limit - 1),
+    supabase
+      .from('secop_process_snapshots')
+      .select('id, captured_at, hash, source_type')
+      .eq('process_id', id)
+      .order('captured_at', { ascending: false })
+      .limit(2),
+  ])
 
   if (error) return Response.json({ error: error.message }, { status: 500 })
 
-  return Response.json({ data, count })
+  // Build snapshot comparison info
+  const last_snapshot = snapshots?.[0] || null
+  const prev_snapshot = snapshots?.[1] || null
+  const snapshot_match = last_snapshot && prev_snapshot
+    ? last_snapshot.hash === prev_snapshot.hash
+    : null
+
+  return Response.json({ data, count, last_snapshot, prev_snapshot, snapshot_match })
 }

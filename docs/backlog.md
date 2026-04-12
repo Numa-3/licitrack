@@ -1,7 +1,7 @@
 # LiciTrack — Backlog
 
 Fuente única de verdad para todo lo pendiente: mejoras a lo existente y features nuevas.
-Última actualización: 2026-04-04
+Última actualización: 2026-04-11
 
 ---
 
@@ -86,7 +86,48 @@ Funcionalidades que no existen todavía.
 - Bulk insert con resumen final
 - Requiere migración: agregar `contact_name` y `address` a tabla `suppliers`
 
+#### Fase 1: Dashboard de Seguimiento + Centro de Notificaciones (`/secop/seguimiento`)
+- KPIs arriba: contratos monitoreados, alertas urgentes, cambios hoy, próximo deadline
+- Feed de cambios en tiempo real (timeline): "Hace 2h: Contrato 03-2024 cambió a Terminado"
+- Contratos en riesgo: los que tienen deadline < 7 días
+- Estado del worker: último ciclo, próximo, errores (de `secop_monitor_log`)
+- Campana de notificaciones en header con badge de pendientes
+- Categorías: roja (crítico: incumplimiento, vencido), amarilla (atención: deadline <48h, nuevo doc), verde (info: pago, actualización)
+- Marcar como leída/no leída
+- Requiere: datos ya están en DB (`secop_monitor_log`, `secop_process_changes`, `secop_processes`); nueva tabla `notifications`
+
+#### Fase 2: Calendario de Deadlines (`/secop/calendario`)
+- Vista mensual/semanal con fechas de vencimiento, liquidación, entrega, renovación
+- Color por urgencia: rojo (vencido/hoy), amarillo (<7 días), verde (OK)
+- Alertas escalonadas: aviso a 7 días, 3 días, 1 día y día del deadline
+- Click en evento → detalle del contrato
+- Futuro: sincronización con Google Calendar
+
+#### Fase 3: WhatsApp Integration
+- Conectar con Twilio WhatsApp API o Meta Cloud API al grupo de trabajo
+- Alertas automáticas: cambio de estado, deadline 48h/24h/vencido, nuevo documento, incumplimiento, nuevo pago
+- Formato estructurado: "CONTRATO 03-2024 | Estado cambió a Liquidación | Valor: $52.7M"
+- Resumen diario automático al grupo: "Hoy: 3 cambios, 2 deadlines esta semana"
+
 ### Media prioridad
+
+#### Fase 4: Radar de Procesos (`/secop/radar`)
+- Vista visual de todos los procesos monitoreados
+- Agrupados por entidad y estado
+- Semáforo verde/amarillo/rojo según actividad reciente y deadlines
+- Filtros por entidad, estado, prioridad, fecha
+
+#### Fase 5: Resumen Semanal + Email
+- PDF automático con todos los cambios de la semana
+- Envío por email al equipo
+- Historial de cambios por contrato (timeline completo desde primer snapshot)
+
+#### Fase 6: Scoring de Riesgo + Asignaciones
+- Ranking de contratos por nivel de atención (deadline cercano + modificaciones + valor alto = más riesgo)
+- Asignación de responsables por contrato ("este contrato lo vigila Claudia")
+- Alertas de inactividad: "Contrato X lleva 30 días sin cambios — verificar"
+- Comparador de versiones: ver qué cambió entre dos otrosíes lado a lado
+- Exportar estado actual de todos los contratos a Excel
 
 #### Etiquetado inteligente de ítems con IA
 - Al crear un ítem, la IA asigna etiqueta principal + sub-etiquetas basadas en la descripción

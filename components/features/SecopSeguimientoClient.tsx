@@ -44,6 +44,8 @@ type Change = {
   priority: 'low' | 'medium' | 'high'
   summary: string
   detected_at: string
+  before_json?: Record<string, unknown> | null
+  after_json?: Record<string, unknown> | null
   secop_processes?: {
     secop_process_id: string
     entidad: string
@@ -66,12 +68,20 @@ type Account = {
   cookies_expire_at: string | null
 }
 
+type WorkerStatus = {
+  status: 'running' | 'success' | 'error'
+  finished_at: string | null
+  processes_checked: number
+  changes_found: number
+} | null
+
 type Props = {
   initialProcesses: Process[]
   initialCount: number
   initialChanges: Change[]
   initialAccounts: Account[]
   urgentCount: number
+  workerStatus: WorkerStatus
   userRole: string
 }
 
@@ -99,6 +109,7 @@ export default function SecopSeguimientoClient({
   initialChanges,
   initialAccounts,
   urgentCount,
+  workerStatus,
   userRole,
 }: Props) {
   const isJefe = userRole === 'jefe'
@@ -302,7 +313,7 @@ export default function SecopSeguimientoClient({
       )}
 
       {/* KPI Cards */}
-      <section className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <KpiCard
           label="Monitoreados"
           value={String(totalCount)}
@@ -325,6 +336,7 @@ export default function SecopSeguimientoClient({
           iconColor="bg-indigo-50 text-indigo-600 ring-1 ring-indigo-500/10"
           detail={`${todayChanges.filter(c => c.priority === 'high').length} de alta prioridad`}
         />
+        <WorkerStatusCard status={workerStatus} />
       </section>
 
       {/* Accounts Panel */}
@@ -374,7 +386,7 @@ export default function SecopSeguimientoClient({
 
       {/* Content */}
       {activeTab === 'changes' ? (
-        <ChangesTimeline changes={changes} />
+        <ChangesTimeline initialChanges={changes} />
       ) : loading ? (
         <div className="flex items-center justify-center py-20 text-gray-400">
           <Loader2 size={24} className="animate-spin" />
@@ -504,6 +516,48 @@ function KpiCard({ label, value, icon: Icon, iconColor, detail, urgent }: {
   )
 }
 
+// ── Worker Status Card ──────────────────────────────────────
+
+function WorkerStatusCard({ status }: { status: WorkerStatus }) {
+  if (!status) {
+    return (
+      <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 flex flex-col"
+        style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xs font-medium text-gray-500">Worker</h3>
+          <div className="p-1.5 rounded-md bg-gray-50 text-gray-400 ring-1 ring-gray-200">
+            <Activity size={14} />
+          </div>
+        </div>
+        <span className="text-sm text-gray-400">Sin datos</span>
+      </div>
+    )
+  }
+
+  const dotColor = status.status === 'success' ? 'bg-green-500' : status.status === 'error' ? 'bg-red-500' : 'bg-amber-500'
+  const statusLabel = status.status === 'success' ? 'Activo' : status.status === 'error' ? 'Error' : 'Corriendo'
+  const ago = status.finished_at ? timeAgo(status.finished_at) : 'en curso'
+
+  return (
+    <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 flex flex-col hover:border-gray-300 transition-colors"
+      style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-xs font-medium text-gray-500">Worker</h3>
+        <div className="p-1.5 rounded-md bg-gray-50 text-gray-600 ring-1 ring-gray-200">
+          <Activity size={14} />
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+        <span className="text-lg font-semibold text-gray-900">{statusLabel}</span>
+      </div>
+      <span className="text-xs text-gray-400 mt-2">
+        {ago} &middot; {status.processes_checked} revisados, {status.changes_found} cambios
+      </span>
+    </div>
+  )
+}
+
 // ── Source Badge ─────────────────────────────────────────────
 
 function SourceBadge({ source }: { source: string }) {
@@ -563,8 +617,39 @@ function DeadlineBadge({ deadline, label }: { deadline: string | null; label: st
 
 // ── Changes Timeline ────────────────────────────────────────
 
-function ChangesTimeline({ changes }: { changes: Change[] }) {
-  if (changes.length === 0) {
+function ChangesTimeline({ initialChanges }: { initialChanges: Change[] }) {
+  const [allChanges, setAllChanges] = useState<Change[]>(initialChanges)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [filterPriority, setFilterPriority] = useState<'all' | 'high' | 'medium'>('all')
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(initialChanges.length >= 20)
+
+  const filtered = filterPriority === 'all'
+    ? allChanges
+    : allChanges.filter(c => c.priority === filterPriority)
+
+  const loadMore = async () => {
+    setLoadingMore(true)
+    try {
+      const params = new URLSearchParams({
+        offset: String(allChanges.length),
+        limit: '20',
+      })
+      if (filterPriority !== 'all') params.set('priority', filterPriority)
+      const res = await fetch(`/api/secop/changes/recent?${params}`)
+      const json = await res.json()
+      if (json.data?.length) {
+        setAllChanges(prev => [...prev, ...json.data])
+        setHasMore(json.data.length >= 20)
+      } else {
+        setHasMore(false)
+      }
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
+  if (filtered.length === 0 && allChanges.length === 0) {
     return (
       <div className="text-center py-20">
         <Activity size={40} className="mx-auto text-gray-300 mb-3" />
@@ -576,7 +661,7 @@ function ChangesTimeline({ changes }: { changes: Change[] }) {
 
   // Group by date
   const grouped = new Map<string, Change[]>()
-  for (const c of changes) {
+  for (const c of filtered) {
     const dateKey = new Date(c.detected_at).toLocaleDateString('es-CO', {
       day: '2-digit', month: 'long', year: 'numeric',
     })
@@ -585,49 +670,132 @@ function ChangesTimeline({ changes }: { changes: Change[] }) {
     grouped.set(dateKey, list)
   }
 
-  const priorityColors: Record<string, string> = {
-    high: 'bg-red-50 text-red-700 ring-red-600/20',
-    medium: 'bg-amber-50 text-amber-700 ring-amber-600/20',
-    low: 'bg-gray-100 text-gray-600 ring-gray-500/10',
+  const dotColors: Record<string, string> = {
+    high: 'bg-red-500',
+    medium: 'bg-amber-500',
+    low: 'bg-gray-400',
   }
 
+  const filters: { key: 'all' | 'high' | 'medium'; label: string }[] = [
+    { key: 'all', label: 'Todas' },
+    { key: 'high', label: 'Alta' },
+    { key: 'medium', label: 'Media' },
+  ]
+
   return (
-    <div className="space-y-6">
-      {Array.from(grouped).map(([date, items]) => (
-        <div key={date}>
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">{date}</p>
-          <div className="space-y-2">
-            {items.map(c => (
-              <div key={c.id} className="bg-white rounded-xl border border-[#EAEAEA] p-4 flex items-start gap-3"
-                style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
-                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset shrink-0 mt-0.5 ${priorityColors[c.priority]}`}>
-                  {c.priority === 'high' ? 'Alta' : c.priority === 'medium' ? 'Media' : 'Baja'}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-900">{c.summary}</p>
-                  {c.secop_processes && (
-                    <p className="text-xs text-gray-400 mt-0.5 truncate">
-                      {c.secop_processes.entidad} — {c.secop_processes.objeto}
-                    </p>
-                  )}
-                </div>
-                <span className="text-[10px] text-gray-400 shrink-0">
-                  {timeAgo(c.detected_at)}
-                </span>
+    <div>
+      {/* Priority filter */}
+      <div className="flex gap-1 mb-4">
+        {filters.map(f => (
+          <button
+            key={f.key}
+            onClick={() => setFilterPriority(f.key)}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+              filterPriority === f.key
+                ? 'bg-gray-900 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Timeline */}
+      <div className="space-y-6">
+        {Array.from(grouped).map(([date, items]) => (
+          <div key={date}>
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">{date}</p>
+            <div className="relative pl-6">
+              {/* Vertical line */}
+              <div className="absolute left-[7px] top-2 bottom-2 w-0.5 bg-gray-200" />
+
+              <div className="space-y-3">
+                {items.map(c => (
+                  <div key={c.id} className="relative">
+                    {/* Priority dot on the line */}
+                    <div className={`absolute -left-6 top-4 w-3.5 h-3.5 rounded-full border-2 border-white ${dotColors[c.priority]}`}
+                      style={{ boxShadow: '0 0 0 2px #f9fafb' }} />
+
+                    <div
+                      className={`bg-white rounded-xl border p-4 cursor-pointer transition-colors ${
+                        expandedId === c.id ? 'border-gray-300 bg-gray-50/50' : 'border-[#EAEAEA] hover:border-gray-300'
+                      }`}
+                      style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}
+                      onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-900">{c.summary}</p>
+                          {c.secop_processes && (
+                            <p className="text-xs text-gray-400 mt-0.5 truncate">
+                              {c.secop_processes.entidad} — {c.secop_processes.objeto}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-gray-400 shrink-0">
+                          {timeAgo(c.detected_at)}
+                        </span>
+                      </div>
+
+                      {/* Expandable before/after */}
+                      {expandedId === c.id && c.before_json != null && (
+                        <div className="mt-3 pt-3 border-t border-gray-200 grid grid-cols-2 gap-3">
+                          <div>
+                            <p className="text-[10px] font-medium text-gray-500 mb-1">Antes</p>
+                            <pre className="text-[11px] text-gray-600 bg-red-50/50 rounded p-2 overflow-auto max-h-32">
+                              {JSON.stringify(c.before_json, null, 2)}
+                            </pre>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-medium text-gray-500 mb-1">Despues</p>
+                            <pre className="text-[11px] text-gray-600 bg-green-50/50 rounded p-2 overflow-auto max-h-32">
+                              {JSON.stringify(c.after_json, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
           </div>
+        ))}
+      </div>
+
+      {/* Load more */}
+      {hasMore && (
+        <div className="text-center mt-6">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {loadingMore ? <Loader2 size={14} className="inline animate-spin mr-1" /> : null}
+            Cargar mas
+          </button>
         </div>
-      ))}
+      )}
     </div>
   )
 }
 
 // ── Detail Panel ────────────────────────────────────────────
 
+type SnapshotInfo = {
+  id: string
+  captured_at: string
+  hash: string
+  source_type: string
+}
+
 function DetailPanel({ process: p, onClose }: { process: Process; onClose: () => void }) {
   const [cronograma, setCronograma] = useState<CronogramaEvent[] | null>(null)
   const [changes, setChanges] = useState<Change[] | null>(null)
+  const [lastSnapshot, setLastSnapshot] = useState<SnapshotInfo | null>(null)
+  const [prevSnapshot, setPrevSnapshot] = useState<SnapshotInfo | null>(null)
+  const [snapshotMatch, setSnapshotMatch] = useState<boolean | null>(null)
   const [loadingData, setLoadingData] = useState(false)
 
   // Load cronograma and changes on mount
@@ -639,6 +807,9 @@ function DetailPanel({ process: p, onClose }: { process: Process; onClose: () =>
     ]).then(([cronoData, changesData]) => {
       setCronograma(cronoData.cronograma || [])
       setChanges(changesData.data || [])
+      setLastSnapshot(changesData.last_snapshot || null)
+      setPrevSnapshot(changesData.prev_snapshot || null)
+      setSnapshotMatch(changesData.snapshot_match ?? null)
     }).finally(() => setLoadingData(false))
   }, [p.id])
 
@@ -665,6 +836,44 @@ function DetailPanel({ process: p, onClose }: { process: Process; onClose: () =>
               </span>
             )}
           </div>
+
+          {/* Snapshot comparison */}
+          {lastSnapshot && (
+            <div className="bg-gray-50 rounded-lg border border-[#EAEAEA] p-3 space-y-2">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Ultima comparacion</label>
+              <div className="flex items-center gap-3">
+                <span className={`w-2 h-2 rounded-full ${snapshotMatch ? 'bg-green-500' : 'bg-amber-500'}`} />
+                <span className="text-xs text-gray-700 font-medium">
+                  {snapshotMatch ? 'Sin cambios' : 'Cambios detectados'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <p className="text-gray-400">Ultima revision</p>
+                  <p className="text-gray-700 font-medium">
+                    {new Date(lastSnapshot.captured_at).toLocaleString('es-CO', {
+                      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+                    })}
+                  </p>
+                </div>
+                {prevSnapshot && (
+                  <div>
+                    <p className="text-gray-400">Comparada contra</p>
+                    <p className="text-gray-700 font-medium">
+                      {new Date(prevSnapshot.captured_at).toLocaleString('es-CO', {
+                        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
+                )}
+              </div>
+              {prevSnapshot && (
+                <p className="text-[10px] text-gray-400">
+                  Intervalo: {Math.round((new Date(lastSnapshot.captured_at).getTime() - new Date(prevSnapshot.captured_at).getTime()) / 60000)} min
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Entity */}
           <div>

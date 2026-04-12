@@ -6,11 +6,21 @@ export const dynamic = 'force-dynamic'
 export default async function SecopSeguimientoPage() {
   const { supabase, userRole } = await getAuthUser()
 
+  const workerLogQuery = userRole === 'jefe'
+    ? supabase
+        .from('secop_monitor_log')
+        .select('status, finished_at, processes_checked, changes_found')
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .single()
+    : Promise.resolve({ data: null })
+
   const [
     { data: processes, count },
     { data: recentChanges },
     { data: accounts },
     { data: urgentProcesses },
+    { data: workerLog },
   ] = await Promise.all([
     supabase
       .from('secop_processes')
@@ -39,6 +49,7 @@ export default async function SecopSeguimientoPage() {
       .not('next_deadline', 'is', null)
       .lte('next_deadline', new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString())
       .gte('next_deadline', new Date().toISOString()),
+    workerLogQuery,
   ])
 
   return (
@@ -48,6 +59,12 @@ export default async function SecopSeguimientoPage() {
       initialChanges={recentChanges || []}
       initialAccounts={accounts || []}
       urgentCount={urgentProcesses?.length || 0}
+      workerStatus={workerLog as {
+        status: 'running' | 'success' | 'error'
+        finished_at: string | null
+        processes_checked: number
+        changes_found: number
+      } | null}
       userRole={userRole}
     />
   )
