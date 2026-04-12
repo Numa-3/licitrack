@@ -95,6 +95,7 @@ type AccountProcess = {
   valor_estimado: number | null
   monitoring_enabled: boolean
   url_publica: string | null
+  entity_name: string | null
 }
 
 type Tab = 'all' | 'urgent' | 'changes'
@@ -1270,6 +1271,8 @@ function ContractsSection({ accountId, onRefresh }: { accountId: string; onRefre
   const [contracts, setContracts] = useState<AccountProcess[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [toggling, setToggling] = useState<Set<string>>(new Set())
+  const [search, setSearch] = useState('')
+  const [estadoFilter, setEstadoFilter] = useState<string>('all')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1298,6 +1301,22 @@ function ContractsSection({ accountId, onRefresh }: { accountId: string; onRefre
     onRefresh()
   }
 
+  const toggleAll = async (ids: string[], enabled: boolean) => {
+    for (const id of ids) {
+      setToggling(prev => new Set([...prev, id]))
+    }
+    setContracts(prev => prev?.map(c => ids.includes(c.id) ? { ...c, monitoring_enabled: enabled } : c) ?? null)
+    await Promise.all(ids.map(id =>
+      fetch(`/api/secop/processes/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ monitoring_enabled: enabled }),
+      })
+    ))
+    setToggling(new Set())
+    onRefresh()
+  }
+
   if (loading) {
     return <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin text-gray-400" /></div>
   }
@@ -1305,66 +1324,141 @@ function ContractsSection({ accountId, onRefresh }: { accountId: string; onRefre
     return <p className="text-xs text-gray-400 py-2">No hay contratos. Selecciona entidades y haz clic en "Descubrir procesos".</p>
   }
 
-  const unmonitored = contracts.filter(c => !c.monitoring_enabled)
-  const monitored = contracts.filter(c => c.monitoring_enabled)
+  // Collect unique estados for filter
+  const estados = [...new Set(contracts.map(c => c.estado).filter(Boolean))] as string[]
+
+  // Filter
+  const filtered = contracts.filter(c => {
+    if (estadoFilter !== 'all' && c.estado !== estadoFilter) return false
+    if (search) {
+      const q = search.toLowerCase()
+      return (
+        c.entidad.toLowerCase().includes(q) ||
+        c.objeto.toLowerCase().includes(q) ||
+        (c.referencia_proceso || '').toLowerCase().includes(q) ||
+        c.secop_process_id.toLowerCase().includes(q)
+      )
+    }
+    return true
+  })
+
+  // Group by entity_name
+  const grouped = new Map<string, AccountProcess[]>()
+  for (const c of filtered) {
+    const key = c.entity_name || 'Sin entidad'
+    const list = grouped.get(key) || []
+    list.push(c)
+    grouped.set(key, list)
+  }
+
+  const estadoStyle = (estado: string | null): string => {
+    switch (estado) {
+      case 'En ejecución': case 'InExecution': return 'bg-blue-100 text-blue-800'
+      case 'Cerrado': case 'Closed': return 'bg-gray-200 text-gray-700'
+      case 'Terminado': case 'Terminated': return 'bg-emerald-100 text-emerald-800'
+      case 'Modificación aceptada': case 'Modified': return 'bg-orange-100 text-orange-800'
+      case 'Liquidado': return 'bg-violet-100 text-violet-800'
+      default: return 'bg-gray-200 text-gray-700'
+    }
+  }
 
   return (
-    <div className="space-y-3">
-      {unmonitored.length > 0 && (
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-amber-600 mb-1.5">
-            Sin monitorear ({unmonitored.length}) — activa los que quieres seguir
-          </p>
-          <div className="space-y-0.5">
-            {unmonitored.map(c => (
-              <ContractToggleRow key={c.id} contract={c} onToggle={toggle} isToggling={toggling.has(c.id)} />
-            ))}
-          </div>
-        </div>
-      )}
-      {monitored.length > 0 && (
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-green-700 mb-1.5">
-            Monitoreados ({monitored.length})
-          </p>
-          <div className="space-y-0.5">
-            {monitored.map(c => (
-              <ContractToggleRow key={c.id} contract={c} onToggle={toggle} isToggling={toggling.has(c.id)} />
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ContractToggleRow({ contract: c, onToggle, isToggling }: {
-  contract: AccountProcess
-  onToggle: (id: string, enabled: boolean) => void
-  isToggling: boolean
-}) {
-  return (
-    <div className={`flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 transition-colors ${!c.monitoring_enabled ? 'opacity-70' : ''}`}>
-      <button
-        onClick={() => onToggle(c.id, !c.monitoring_enabled)}
-        disabled={isToggling}
-        className="shrink-0 text-gray-400 hover:text-indigo-600 transition-colors"
-        title={c.monitoring_enabled ? 'Desactivar monitoreo' : 'Activar monitoreo'}
-      >
-        {isToggling
-          ? <Loader2 size={18} className="animate-spin text-gray-400" />
-          : c.monitoring_enabled
-            ? <ToggleRight size={18} className="text-indigo-600" />
-            : <ToggleLeft size={18} />
-        }
-      </button>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-gray-900 truncate">{c.entidad}</p>
-        <p className="text-[10px] text-gray-500 truncate">{c.referencia_proceso || c.secop_process_id}</p>
+    <div className="space-y-4">
+      {/* Search + filter */}
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Buscar por entidad, objeto o referencia..."
+          className="flex-1 px-3 py-1.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder:text-gray-400"
+        />
+        <select
+          value={estadoFilter}
+          onChange={e => setEstadoFilter(e.target.value)}
+          className="px-2 py-1.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        >
+          <option value="all">Todos los estados</option>
+          {estados.map(e => <option key={e} value={e}>{e}</option>)}
+        </select>
       </div>
-      {c.valor_estimado != null && (
-        <p className="text-[10px] text-gray-400 shrink-0 tabular-nums">{formatCurrency(c.valor_estimado)}</p>
-      )}
+
+      <p className="text-[10px] text-gray-500">{filtered.length} de {contracts.length} contratos</p>
+
+      {/* Grouped by entity_name (your company) */}
+      {Array.from(grouped).map(([entityName, items]) => {
+        const unmonitored = items.filter(c => !c.monitoring_enabled)
+        const monCount = items.filter(c => c.monitoring_enabled).length
+        return (
+          <div key={entityName} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+            {/* Company header */}
+            <div className="flex items-center justify-between px-4 py-3 bg-gray-900 text-white">
+              <div>
+                <p className="text-sm font-semibold">{entityName}</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {monCount} de {items.length} monitoreados
+                </p>
+              </div>
+              {unmonitored.length > 0 && (
+                <button
+                  onClick={() => toggleAll(unmonitored.map(c => c.id), true)}
+                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300 px-3 py-1 rounded-md hover:bg-white/10 transition-colors"
+                >
+                  Monitorear todos ({unmonitored.length})
+                </button>
+              )}
+            </div>
+
+            {/* Contract cards */}
+            <div className="divide-y divide-gray-100">
+              {items.map(c => (
+                <div
+                  key={c.id}
+                  className={`flex items-start gap-3 px-4 py-3 transition-colors ${
+                    c.monitoring_enabled
+                      ? 'bg-indigo-50/40 hover:bg-indigo-50/70'
+                      : 'bg-white hover:bg-gray-50'
+                  }`}
+                >
+                  {/* Toggle */}
+                  <button
+                    onClick={() => toggle(c.id, !c.monitoring_enabled)}
+                    disabled={toggling.has(c.id)}
+                    className="shrink-0 mt-1"
+                    title={c.monitoring_enabled ? 'Desactivar monitoreo' : 'Activar monitoreo'}
+                  >
+                    {toggling.has(c.id)
+                      ? <Loader2 size={20} className="animate-spin text-gray-400" />
+                      : c.monitoring_enabled
+                        ? <ToggleRight size={20} className="text-indigo-600" />
+                        : <ToggleLeft size={20} className="text-gray-300 hover:text-indigo-500 transition-colors" />
+                    }
+                  </button>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900">{c.entidad}</p>
+                    <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{c.objeto}</p>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      {c.estado && (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${estadoStyle(c.estado)}`}>
+                          {c.estado}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-gray-400">{c.referencia_proceso || c.secop_process_id}</span>
+                    </div>
+                  </div>
+
+                  {/* Value */}
+                  {c.valor_estimado != null && (
+                    <p className="text-sm font-semibold text-gray-900 shrink-0 tabular-nums">{formatCurrency(c.valor_estimado)}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

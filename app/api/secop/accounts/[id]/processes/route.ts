@@ -18,9 +18,10 @@ export async function GET(
 
   const { data, error } = await supabase
     .from('secop_processes')
-    .select('id, secop_process_id, referencia_proceso, entidad, objeto, estado, valor_estimado, monitoring_enabled, next_deadline, url_publica')
+    .select('id, secop_process_id, referencia_proceso, entidad, objeto, estado, valor_estimado, monitoring_enabled, next_deadline, url_publica, entity_name')
     .eq('account_id', id)
     .eq('source', 'account')
+    .order('entity_name', { ascending: true })
     .order('monitoring_enabled', { ascending: false })
     .order('entidad', { ascending: true })
 
