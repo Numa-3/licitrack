@@ -1,4 +1,4 @@
-import { admin } from './db.js'
+import { admin } from '../src/db.js'
 
 async function main() {
   const { data } = await admin
