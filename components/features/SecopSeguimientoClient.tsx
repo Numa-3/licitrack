@@ -99,6 +99,16 @@ export default function SecopSeguimientoClient({
     showToast('Cuenta creada', 'success')
   }
 
+  const updateMonitoredEntities = async (id: string, monitored: string[]) => {
+    const res = await fetch(`/api/secop/accounts/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ monitored_entities: monitored }),
+    })
+    if (!res.ok) { showToast('Error al guardar entidades'); return }
+    setAccounts(prev => prev.map(a => a.id === id ? { ...a, monitored_entities: monitored } : a))
+  }
+
   const requestSync = async (id: string) => {
     const res = await fetch(`/api/secop/accounts/${id}/sync`, { method: 'POST' })
     if (!res.ok) { showToast('Error al solicitar sync'); return }
@@ -247,6 +257,7 @@ export default function SecopSeguimientoClient({
           onToggle={toggleAccount}
           onDelete={deleteAccount}
           onCreate={createAccount}
+          onUpdateEntities={updateMonitoredEntities}
           onRequestSync={requestSync}
           onRefreshProcesses={() => fetchProcesses(activeTab === 'changes' ? 'all' : activeTab, page * PAGE_SIZE)}
         />

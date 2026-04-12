@@ -104,11 +104,24 @@ async function runFullCycle() {
       return result
     }
 
-    // Discovery: SECOP shows all contracts for the account regardless of entity,
-    // so we just discover from the default view (no entity switching needed).
-    console.log(`  Discovering contracts...`)
-    const newCount = await runDiscovery()
-    console.log(`  Discovered: ${newCount} new contract(s)`)
+    // Discovery per entity — each entity has different contracts in SECOP
+    const monitored = (acc.monitored_entities as string[] | null) || []
+
+    if (monitored.length === 0) {
+      // No entities selected — discover from default view to populate entity list
+      console.log(`  No entities selected — discovering from default view`)
+      const newCount = await runDiscovery()
+      console.log(`  Discovered: ${newCount} new contract(s)`)
+      console.log(`  Select entities in "Mis cuentas" to discover entity-specific contracts`)
+    } else {
+      console.log(`  Processing ${monitored.length} entit${monitored.length === 1 ? 'y' : 'ies'}`)
+      for (const entityName of monitored) {
+        console.log(`\n  → ${entityName}`)
+        const newCount = await runDiscovery(entityName)
+        console.log(`    Discovered: ${newCount} new contract(s)`)
+        await new Promise(r => setTimeout(r, config.delayBetweenRequestsMs))
+      }
+    }
 
     // Clear sync_requested_at flag after processing
     if (acc.sync_requested_at) {
@@ -133,14 +146,14 @@ async function runFullCycle() {
 async function processPendingSyncs() {
   const { data: pending } = await admin
     .from('secop_accounts')
-    .select('id, name')
+    .select('id, name, monitored_entities')
     .eq('is_active', true)
     .not('sync_requested_at', 'is', null)
 
   if (!pending?.length) return
 
   for (const acc of pending) {
-    console.log(`\n[Sync] ${acc.name}: discovering contracts...`)
+    const monitored = (acc.monitored_entities as string[] | null) || []
 
     const session = await getValidSession(acc.id)
     if (!session) {
@@ -153,10 +166,24 @@ async function processPendingSyncs() {
       }
     }
 
-    const result = await discoverProcesses(acc.id)
-    if (result === -1) {
-      const ok = await loginAccount(acc.id)
-      if (ok) await discoverProcesses(acc.id)
+    if (monitored.length === 0) {
+      console.log(`[Sync] ${acc.name}: no entities selected — discovering default`)
+      const result = await discoverProcesses(acc.id)
+      if (result === -1) {
+        const ok = await loginAccount(acc.id)
+        if (ok) await discoverProcesses(acc.id)
+      }
+    } else {
+      console.log(`[Sync] ${acc.name}: discovering ${monitored.length} entities`)
+      for (const entityName of monitored) {
+        console.log(`[Sync] → ${entityName}`)
+        const result = await discoverProcesses(acc.id, entityName)
+        if (result === -1) {
+          const ok = await loginAccount(acc.id)
+          if (ok) await discoverProcesses(acc.id, entityName)
+        }
+        await new Promise(r => setTimeout(r, config.delayBetweenRequestsMs))
+      }
     }
 
     await admin.from('secop_accounts').update({ sync_requested_at: null }).eq('id', acc.id)

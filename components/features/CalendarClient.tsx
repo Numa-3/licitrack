@@ -153,7 +153,7 @@ export default function CalendarClient({ initialEvents, initialMonth }: Props) {
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-[900px] mx-auto">
+    <div className="p-4 md:p-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-gray-900">Calendario SECOP</h1>
@@ -204,7 +204,7 @@ export default function CalendarClient({ initialEvents, initialMonth }: Props) {
               <button
                 key={i}
                 onClick={() => setSelectedDay(isSelected ? null : cell.date)}
-                className={`relative min-h-[72px] p-1.5 border-b border-r border-gray-100 text-left transition-colors ${
+                className={`relative min-h-[100px] p-2 border-b border-r border-gray-100 text-left transition-colors ${
                   !cell.isCurrentMonth ? 'bg-gray-50/50' : 'bg-white hover:bg-gray-50'
                 } ${isSelected ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-200' : ''}`}
               >

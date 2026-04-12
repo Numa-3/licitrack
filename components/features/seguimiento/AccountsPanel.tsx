@@ -6,11 +6,12 @@ import { formatCurrency } from '@/lib/utils/format'
 import type { Account, AccountProcess } from './types'
 import { timeAgo, estadoStyle } from './helpers'
 
-export default function AccountsPanel({ accounts, onToggle, onDelete, onCreate, onRequestSync, onRefreshProcesses }: {
+export default function AccountsPanel({ accounts, onToggle, onDelete, onCreate, onUpdateEntities, onRequestSync, onRefreshProcesses }: {
   accounts: Account[]
   onToggle: (id: string, active: boolean) => void
   onDelete: (id: string) => void
   onCreate: (name: string, username: string, password: string) => void
+  onUpdateEntities: (id: string, monitored: string[]) => void
   onRequestSync: (id: string) => Promise<void>
   onRefreshProcesses: () => void
 }) {
@@ -41,6 +42,7 @@ export default function AccountsPanel({ accounts, onToggle, onDelete, onCreate, 
               onExpand={() => setExpandedId(expandedId === acc.id ? null : acc.id)}
               onToggle={onToggle}
               onDelete={onDelete}
+              onUpdateEntities={onUpdateEntities}
               onRequestSync={onRequestSync}
               onRefreshProcesses={onRefreshProcesses}
             />
@@ -51,23 +53,36 @@ export default function AccountsPanel({ accounts, onToggle, onDelete, onCreate, 
   )
 }
 
-function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onRequestSync, onRefreshProcesses }: {
+function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEntities, onRequestSync, onRefreshProcesses }: {
   acc: Account
   isExpanded: boolean
   onExpand: () => void
   onToggle: (id: string, active: boolean) => void
   onDelete: (id: string) => void
+  onUpdateEntities: (id: string, monitored: string[]) => void
   onRequestSync: (id: string) => Promise<void>
   onRefreshProcesses: () => void
 }) {
+  const discovered = acc.discovered_entities || []
+  const [pending, setPending] = useState<string[]>(acc.monitored_entities || [])
   const [syncing, setSyncing] = useState(Boolean(acc.sync_requested_at))
   const [syncDone, setSyncDone] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [contractsKey, setContractsKey] = useState(0)
 
-  const handleDiscover = async () => {
-    setSyncing(true)
+  const prevMonitored = acc.monitored_entities || []
+  const isDirty = JSON.stringify(pending.slice().sort()) !== JSON.stringify(prevMonitored.slice().sort())
+
+  const handleSaveAndDiscover = async () => {
+    setSaving(true)
     setSyncDone(false)
-    await onRequestSync(acc.id)
+    try {
+      await onUpdateEntities(acc.id, pending)
+      setSyncing(true)
+      await onRequestSync(acc.id)
+    } finally {
+      setSaving(false)
+    }
   }
 
   useEffect(() => {
@@ -96,6 +111,11 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onRequestSy
           <div className="flex items-center gap-3 mt-0.5 flex-wrap">
             <span className="text-xs text-gray-400">{acc.username}</span>
             <SessionStatus expiresAt={acc.cookies_expire_at} />
+            {discovered.length > 0 && (
+              <span className="text-xs text-gray-400">
+                {pending.length}/{discovered.length} entidades
+              </span>
+            )}
             {acc.process_count > 0 && (
               <span className="text-xs text-gray-400">{acc.process_count} contratos</span>
             )}
@@ -124,15 +144,57 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onRequestSy
 
       {isExpanded && (
         <div className="px-3 pb-3 border-t border-[#EAEAEA] pt-3">
+          {/* Entity selection */}
+          {discovered.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
+                Entidades a monitorear
+              </p>
+              <div className="space-y-1.5 mb-3 max-h-[200px] overflow-y-auto">
+                {discovered.map(entity => {
+                  const isChecked = pending.includes(entity.name)
+                  return (
+                    <label key={entity.name} className="flex items-center gap-2 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => setPending(prev =>
+                          isChecked ? prev.filter(m => m !== entity.name) : [...prev, entity.name]
+                        )}
+                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className={`text-sm ${isChecked ? 'text-gray-900' : 'text-gray-500'} group-hover:text-gray-900`}>
+                        {entity.name}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+              <div className="flex gap-2 mb-3">
+                <button onClick={() => setPending(discovered.map(e => e.name))}
+                  className="text-xs text-indigo-600 hover:text-indigo-700">Seleccionar todas</button>
+                <span className="text-xs text-gray-300">|</span>
+                <button onClick={() => setPending([])}
+                  className="text-xs text-gray-500 hover:text-gray-700">Ninguna</button>
+              </div>
+            </div>
+          )}
+
+          {/* Discover button */}
           <div className="flex items-center gap-3 mb-4">
             <button
-              onClick={handleDiscover}
-              disabled={syncing}
+              onClick={handleSaveAndDiscover}
+              disabled={saving || syncing || pending.length === 0}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-gray-900 hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-md shadow-sm"
             >
-              {syncing ? <Loader2 size={13} className="animate-spin" /> : <Star size={13} />}
-              Descubrir procesos
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Star size={13} />}
+              {isDirty ? 'Guardar y descubrir' : 'Descubrir procesos'}
             </button>
+            {syncing && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-blue-600">
+                <Loader2 size={12} className="animate-spin" /> Descubriendo...
+              </span>
+            )}
             {syncDone && <span className="text-xs text-green-600">Listo</span>}
           </div>
 
@@ -143,7 +205,7 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onRequestSy
               </p>
               {acc.last_sync_at && (
                 <button
-                  onClick={handleDiscover}
+                  onClick={handleSaveAndDiscover}
                   disabled={syncing}
                   className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
                 >
