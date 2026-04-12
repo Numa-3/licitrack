@@ -18,6 +18,7 @@ import {
   Landmark,
   Receipt,
   Radar,
+  Calendar,
   Settings,
   Menu,
   ChevronRight,
@@ -61,6 +62,7 @@ const navSections: NavSection[] = [
     items: [
       { href: '/secop/radar', label: 'Radar', icon: Radar },
       { href: '/secop/seguimiento', label: 'Seguimiento', icon: Eye },
+      { href: '/secop/calendario', label: 'Calendario', icon: Calendar },
     ],
   },
   {
