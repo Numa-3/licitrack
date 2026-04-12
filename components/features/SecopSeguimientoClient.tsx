@@ -178,15 +178,6 @@ export default function SecopSeguimientoClient({
     showToast('Cuenta creada', 'success')
   }
 
-  const updateMonitoredEntities = async (id: string, monitored: string[]) => {
-    const res = await fetch(`/api/secop/accounts/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ monitored_entities: monitored }),
-    })
-    if (!res.ok) { showToast('Error al guardar entidades'); return }
-    setAccounts(prev => prev.map(a => a.id === id ? { ...a, monitored_entities: monitored } : a))
-  }
 
   const requestSync = async (id: string) => {
     const res = await fetch(`/api/secop/accounts/${id}/sync`, { method: 'POST' })
@@ -347,7 +338,6 @@ export default function SecopSeguimientoClient({
           onToggle={toggleAccount}
           onDelete={deleteAccount}
           onCreate={createAccount}
-          onUpdateEntities={updateMonitoredEntities}
           onRequestSync={requestSync}
           onRefreshProcesses={() => fetchProcesses(activeTab === 'changes' ? 'all' : activeTab, page * PAGE_SIZE)}
         />
@@ -1034,12 +1024,11 @@ function EmptyState({ hasAccounts, onShowAccounts }: { hasAccounts: boolean; onS
 
 // ── Accounts Panel ──────────────────────────────────────────
 
-function AccountsPanel({ accounts, onToggle, onDelete, onCreate, onUpdateEntities, onRequestSync, onRefreshProcesses }: {
+function AccountsPanel({ accounts, onToggle, onDelete, onCreate, onRequestSync, onRefreshProcesses }: {
   accounts: Account[]
   onToggle: (id: string, active: boolean) => void
   onDelete: (id: string) => void
   onCreate: (name: string, username: string, password: string) => void
-  onUpdateEntities: (id: string, monitored: string[]) => void
   onRequestSync: (id: string) => Promise<void>
   onRefreshProcesses: () => void
 }) {
@@ -1070,7 +1059,6 @@ function AccountsPanel({ accounts, onToggle, onDelete, onCreate, onUpdateEntitie
               onExpand={() => setExpandedId(expandedId === acc.id ? null : acc.id)}
               onToggle={onToggle}
               onDelete={onDelete}
-              onUpdateEntities={onUpdateEntities}
               onRequestSync={onRequestSync}
               onRefreshProcesses={onRefreshProcesses}
             />
@@ -1081,40 +1069,24 @@ function AccountsPanel({ accounts, onToggle, onDelete, onCreate, onUpdateEntitie
   )
 }
 
-function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEntities, onRequestSync, onRefreshProcesses }: {
+function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onRequestSync, onRefreshProcesses }: {
   acc: Account
   isExpanded: boolean
   onExpand: () => void
   onToggle: (id: string, active: boolean) => void
   onDelete: (id: string) => void
-  onUpdateEntities: (id: string, monitored: string[]) => void
   onRequestSync: (id: string) => Promise<void>
   onRefreshProcesses: () => void
 }) {
-  const discovered = acc.discovered_entities || []
-  const [pending, setPending] = useState<string[]>(acc.monitored_entities || [])
-  const [saving, setSaving] = useState(false)
   const [syncing, setSyncing] = useState(Boolean(acc.sync_requested_at))
   const [syncDone, setSyncDone] = useState(false)
   const [contractsKey, setContractsKey] = useState(0)
 
-  // Sync pending state when acc.monitored_entities changes from outside
-  const prevMonitored = acc.monitored_entities || []
-  const isDirty = JSON.stringify(pending.slice().sort()) !== JSON.stringify(prevMonitored.slice().sort())
-
-  const handleSaveAndDiscover = async () => {
-    setSaving(true)
+  const handleDiscover = async () => {
+    setSyncing(true)
     setSyncDone(false)
-    try {
-      await onUpdateEntities(acc.id, pending)
-      setSyncing(true)
-      await onRequestSync(acc.id)
-    } finally {
-      setSaving(false)
-    }
+    await onRequestSync(acc.id)
   }
-
-  const hasSyncPending = syncing
 
   // Poll until worker clears sync_requested_at, then reload contracts
   useEffect(() => {
@@ -1143,20 +1115,15 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEnt
           <div className="flex items-center gap-3 mt-0.5 flex-wrap">
             <span className="text-xs text-gray-400">{acc.username}</span>
             <SessionStatus expiresAt={acc.cookies_expire_at} />
-            {discovered.length > 0 && (
-              <span className="text-xs text-gray-400">
-                {(acc.monitored_entities || []).length}/{discovered.length} entidades
-              </span>
+            {acc.process_count > 0 && (
+              <span className="text-xs text-gray-400">{acc.process_count} contratos</span>
             )}
-            {discovered.length === 0 && (
-              <span className="text-[10px] text-amber-600">Correr worker --discover</span>
-            )}
-            {hasSyncPending && (
+            {syncing && (
               <span className="inline-flex items-center gap-1 text-[10px] text-blue-600">
-                <Loader2 size={10} className="animate-spin" /> En cola
+                <Loader2 size={10} className="animate-spin" /> Descubriendo...
               </span>
             )}
-            {acc.last_sync_at && !hasSyncPending && (
+            {acc.last_sync_at && !syncing && (
               <span className="text-[10px] text-gray-400">Sync {timeAgo(acc.last_sync_at)}</span>
             )}
           </div>
@@ -1174,91 +1141,40 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEnt
         </div>
       </div>
 
-      {/* Entity checklist */}
-      {isExpanded && discovered.length > 0 && (
+      {isExpanded && (
         <div className="px-3 pb-3 border-t border-[#EAEAEA] pt-3">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
-            Entidades a monitorear
-          </p>
-          <div className="space-y-1.5 mb-3">
-            {discovered.map(entity => {
-              const isChecked = pending.includes(entity.name)
-              return (
-                <label key={entity.name} className="flex items-center gap-2 cursor-pointer group">
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={() => {
-                      setPending(prev =>
-                        isChecked ? prev.filter(m => m !== entity.name) : [...prev, entity.name]
-                      )
-                    }}
-                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span className={`text-sm ${isChecked ? 'text-gray-900' : 'text-gray-500'} group-hover:text-gray-900`}>
-                    {entity.name}
-                  </span>
-                </label>
-              )
-            })}
-          </div>
-
-          {/* Select all / none */}
-          <div className="flex gap-2 mb-3">
-            <button onClick={() => setPending(discovered.map(e => e.name))}
-              className="text-xs text-indigo-600 hover:text-indigo-700">
-              Seleccionar todas
-            </button>
-            <span className="text-xs text-gray-300">|</span>
-            <button onClick={() => setPending([])}
-              className="text-xs text-gray-500 hover:text-gray-700">
-              Ninguna
-            </button>
-          </div>
-
-          {/* Confirm + discover button */}
-          <div className="flex items-center gap-3">
+          {/* Discover button */}
+          <div className="flex items-center gap-3 mb-4">
             <button
-              onClick={handleSaveAndDiscover}
-              disabled={saving || syncing || pending.length === 0}
+              onClick={handleDiscover}
+              disabled={syncing}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-gray-900 hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-md shadow-sm"
             >
-              {saving ? <Loader2 size={13} className="animate-spin" /> : <Star size={13} />}
-              {isDirty ? 'Guardar y descubrir procesos' : 'Descubrir procesos'}
+              {syncing ? <Loader2 size={13} className="animate-spin" /> : <Star size={13} />}
+              Descubrir procesos
             </button>
-            {hasSyncPending && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-blue-600">
-                <Loader2 size={12} className="animate-spin" /> Descubriendo...
-              </span>
-            )}
-            {syncDone && (
-              <span className="text-xs text-green-600">Listo</span>
-            )}
+            {syncDone && <span className="text-xs text-green-600">Listo</span>}
           </div>
 
-          {/* Step 2: Contract selection */}
-          {acc.last_sync_at && (
-            <div className="mt-4 border-t border-[#EAEAEA] pt-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-                  Contratos descubiertos
-                </p>
+          {/* Contracts */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+                Contratos descubiertos
+              </p>
+              {acc.last_sync_at && (
                 <button
-                  onClick={async () => {
-                    setSyncing(true)
-                    setSyncDone(false)
-                    await onRequestSync(acc.id)
-                  }}
-                  disabled={hasSyncPending}
+                  onClick={handleDiscover}
+                  disabled={syncing}
                   className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
                 >
-                  {hasSyncPending ? <Loader2 size={10} className="animate-spin" /> : <Star size={10} />}
+                  {syncing ? <Loader2 size={10} className="animate-spin" /> : <Star size={10} />}
                   Actualizar
                 </button>
-              </div>
-              <ContractsSection key={contractsKey} accountId={acc.id} onRefresh={onRefreshProcesses} />
+              )}
             </div>
-          )}
+            <ContractsSection key={contractsKey} accountId={acc.id} onRefresh={onRefreshProcesses} />
+          </div>
         </div>
       )}
     </div>
@@ -1342,14 +1258,8 @@ function ContractsSection({ accountId, onRefresh }: { accountId: string; onRefre
     return true
   })
 
-  // Group by entity_name
-  const grouped = new Map<string, AccountProcess[]>()
-  for (const c of filtered) {
-    const key = c.entity_name || 'Sin entidad'
-    const list = grouped.get(key) || []
-    list.push(c)
-    grouped.set(key, list)
-  }
+  const unmonitored = filtered.filter(c => !c.monitoring_enabled)
+  const monCount = filtered.filter(c => c.monitoring_enabled).length
 
   const estadoStyle = (estado: string | null): string => {
     switch (estado) {
@@ -1363,9 +1273,9 @@ function ContractsSection({ accountId, onRefresh }: { accountId: string; onRefre
   }
 
   return (
-    <div className="space-y-4">
-      {/* Search + filter */}
-      <div className="flex gap-2">
+    <div className="space-y-3">
+      {/* Search + filter + bulk action */}
+      <div className="flex gap-2 items-center">
         <input
           type="text"
           value={search}
@@ -1383,82 +1293,62 @@ function ContractsSection({ accountId, onRefresh }: { accountId: string; onRefre
         </select>
       </div>
 
-      <p className="text-[10px] text-gray-500">{filtered.length} de {contracts.length} contratos</p>
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] text-gray-500">{monCount} de {filtered.length} monitoreados</p>
+        {unmonitored.length > 0 && (
+          <button
+            onClick={() => toggleAll(unmonitored.map(c => c.id), true)}
+            className="text-[10px] font-medium text-indigo-600 hover:text-indigo-700"
+          >
+            Monitorear todos ({unmonitored.length})
+          </button>
+        )}
+      </div>
 
-      {/* Grouped by entity_name (your company) */}
-      {Array.from(grouped).map(([entityName, items]) => {
-        const unmonitored = items.filter(c => !c.monitoring_enabled)
-        const monCount = items.filter(c => c.monitoring_enabled).length
-        return (
-          <div key={entityName} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-            {/* Company header */}
-            <div className="flex items-center justify-between px-4 py-3 bg-gray-900 text-white">
-              <div>
-                <p className="text-sm font-semibold">{entityName}</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {monCount} de {items.length} monitoreados
-                </p>
+      {/* Flat contract list */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm divide-y divide-gray-100">
+        {filtered.map(c => (
+          <div
+            key={c.id}
+            className={`flex items-start gap-3 px-4 py-3 transition-colors ${
+              c.monitoring_enabled
+                ? 'bg-indigo-50/40 hover:bg-indigo-50/70'
+                : 'bg-white hover:bg-gray-50'
+            }`}
+          >
+            <button
+              onClick={() => toggle(c.id, !c.monitoring_enabled)}
+              disabled={toggling.has(c.id)}
+              className="shrink-0 mt-1"
+              title={c.monitoring_enabled ? 'Desactivar monitoreo' : 'Activar monitoreo'}
+            >
+              {toggling.has(c.id)
+                ? <Loader2 size={20} className="animate-spin text-gray-400" />
+                : c.monitoring_enabled
+                  ? <ToggleRight size={20} className="text-indigo-600" />
+                  : <ToggleLeft size={20} className="text-gray-300 hover:text-indigo-500 transition-colors" />
+              }
+            </button>
+
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900">{c.entidad}</p>
+              <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{c.objeto}</p>
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                {c.estado && (
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${estadoStyle(c.estado)}`}>
+                    {c.estado}
+                  </span>
+                )}
+                <span className="text-[10px] text-gray-400">{c.referencia_proceso || c.secop_process_id}</span>
               </div>
-              {unmonitored.length > 0 && (
-                <button
-                  onClick={() => toggleAll(unmonitored.map(c => c.id), true)}
-                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300 px-3 py-1 rounded-md hover:bg-white/10 transition-colors"
-                >
-                  Monitorear todos ({unmonitored.length})
-                </button>
-              )}
             </div>
 
-            {/* Contract cards */}
-            <div className="divide-y divide-gray-100">
-              {items.map(c => (
-                <div
-                  key={c.id}
-                  className={`flex items-start gap-3 px-4 py-3 transition-colors ${
-                    c.monitoring_enabled
-                      ? 'bg-indigo-50/40 hover:bg-indigo-50/70'
-                      : 'bg-white hover:bg-gray-50'
-                  }`}
-                >
-                  {/* Toggle */}
-                  <button
-                    onClick={() => toggle(c.id, !c.monitoring_enabled)}
-                    disabled={toggling.has(c.id)}
-                    className="shrink-0 mt-1"
-                    title={c.monitoring_enabled ? 'Desactivar monitoreo' : 'Activar monitoreo'}
-                  >
-                    {toggling.has(c.id)
-                      ? <Loader2 size={20} className="animate-spin text-gray-400" />
-                      : c.monitoring_enabled
-                        ? <ToggleRight size={20} className="text-indigo-600" />
-                        : <ToggleLeft size={20} className="text-gray-300 hover:text-indigo-500 transition-colors" />
-                    }
-                  </button>
-
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900">{c.entidad}</p>
-                    <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{c.objeto}</p>
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                      {c.estado && (
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${estadoStyle(c.estado)}`}>
-                          {c.estado}
-                        </span>
-                      )}
-                      <span className="text-[10px] text-gray-400">{c.referencia_proceso || c.secop_process_id}</span>
-                    </div>
-                  </div>
-
-                  {/* Value */}
-                  {c.valor_estimado != null && (
-                    <p className="text-sm font-semibold text-gray-900 shrink-0 tabular-nums">{formatCurrency(c.valor_estimado)}</p>
-                  )}
-                </div>
-              ))}
-            </div>
+            {c.valor_estimado != null && (
+              <p className="text-sm font-semibold text-gray-900 shrink-0 tabular-nums">{formatCurrency(c.valor_estimado)}</p>
+            )}
           </div>
-        )
-      })}
+        ))}
+      </div>
     </div>
   )
 }

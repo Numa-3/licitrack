@@ -73,8 +73,6 @@ async function runFullCycle() {
 
   // 2. For each account: login once, then discover for each monitored company
   for (const acc of accounts) {
-    const monitored = (acc.monitored_entities as string[] | null) || []
-
     console.log(`[Worker] ${acc.name}`)
 
     // Login once (SECOP company switching uses session cookies, not re-login)
@@ -106,19 +104,11 @@ async function runFullCycle() {
       return result
     }
 
-    if (monitored.length === 0) {
-      // No entities selected — company list was already saved during login
-      console.log(`  No entities selected — open Mis cuentas to pick companies`)
-    } else {
-      console.log(`  Processing ${monitored.length} compan${monitored.length === 1 ? 'y' : 'ies'}`)
-
-      for (const entityName of monitored) {
-        console.log(`\n  → ${entityName}`)
-        const newCount = await runDiscovery(entityName)
-        console.log(`    Discovered: ${newCount} new contract(s)`)
-        await new Promise(r => setTimeout(r, config.delayBetweenRequestsMs))
-      }
-    }
+    // Discovery: SECOP shows all contracts for the account regardless of entity,
+    // so we just discover from the default view (no entity switching needed).
+    console.log(`  Discovering contracts...`)
+    const newCount = await runDiscovery()
+    console.log(`  Discovered: ${newCount} new contract(s)`)
 
     // Clear sync_requested_at flag after processing
     if (acc.sync_requested_at) {
@@ -143,21 +133,14 @@ async function runFullCycle() {
 async function processPendingSyncs() {
   const { data: pending } = await admin
     .from('secop_accounts')
-    .select('id, name, monitored_entities')
+    .select('id, name')
     .eq('is_active', true)
     .not('sync_requested_at', 'is', null)
 
   if (!pending?.length) return
 
   for (const acc of pending) {
-    const monitored = (acc.monitored_entities as string[] | null) || []
-    if (monitored.length === 0) {
-      console.log(`[Sync] ${acc.name}: no entities selected — skipping`)
-      await admin.from('secop_accounts').update({ sync_requested_at: null }).eq('id', acc.id)
-      continue
-    }
-
-    console.log(`\n[Sync] ${acc.name}: processing ${monitored.length} entit${monitored.length === 1 ? 'y' : 'ies'}`)
+    console.log(`\n[Sync] ${acc.name}: discovering contracts...`)
 
     const session = await getValidSession(acc.id)
     if (!session) {
@@ -170,15 +153,10 @@ async function processPendingSyncs() {
       }
     }
 
-    for (const entityName of monitored) {
-      console.log(`[Sync] → ${entityName}`)
-      const result = await discoverProcesses(acc.id, entityName)
-      if (result === -1) {
-        // Session expired — re-login and retry
-        const ok = await loginAccount(acc.id)
-        if (ok) await discoverProcesses(acc.id, entityName)
-      }
-      await new Promise(r => setTimeout(r, config.delayBetweenRequestsMs))
+    const result = await discoverProcesses(acc.id)
+    if (result === -1) {
+      const ok = await loginAccount(acc.id)
+      if (ok) await discoverProcesses(acc.id)
     }
 
     await admin.from('secop_accounts').update({ sync_requested_at: null }).eq('id', acc.id)
