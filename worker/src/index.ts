@@ -1,3 +1,4 @@
+import { existsSync } from 'fs'
 import { admin } from './db.js'
 import { config } from './config.js'
 import { loginAccount } from './login.js'
@@ -24,6 +25,18 @@ async function main() {
   console.log('║  LiciTrack SECOP Worker              ║')
   console.log('╚══════════════════════════════════════╝')
   console.log(`Mode: ${loop ? 'continuous' : 'single run'}`)
+
+  // Check Playwright browsers are available
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
+    console.log(`Browsers: ${process.env.PLAYWRIGHT_BROWSERS_PATH}`)
+    if (!existsSync(process.env.PLAYWRIGHT_BROWSERS_PATH)) {
+      console.error(`\n[ERROR] PLAYWRIGHT_BROWSERS_PATH does not exist: ${process.env.PLAYWRIGHT_BROWSERS_PATH}`)
+      console.error('Run: npx playwright install chromium')
+      if (!loop) process.exit(1)
+    }
+  } else {
+    console.log('Browsers: default location (set PLAYWRIGHT_BROWSERS_PATH if running as service)')
+  }
   console.log()
 
   do {
@@ -44,7 +57,11 @@ async function main() {
       const waitStart = Date.now()
       while (Date.now() - waitStart < waitMs) {
         await new Promise(r => setTimeout(r, 30_000))
-        await processPendingSyncs()
+        try {
+          await processPendingSyncs()
+        } catch (err) {
+          console.error('[Worker] Sync check failed:', err instanceof Error ? err.message : err)
+        }
       }
     }
   } while (loop)
@@ -191,7 +208,15 @@ async function processPendingSyncs() {
   }
 }
 
-main().catch(err => {
+main().catch(async err => {
   console.error('[Worker] Fatal:', err)
-  process.exit(1)
+  // In loop mode, don't exit — wait 5 minutes and restart.
+  // This prevents NSSM crash loops that eat all server RAM.
+  if (process.argv.includes('--loop')) {
+    console.error('[Worker] Waiting 5 minutes before restarting...')
+    await new Promise(r => setTimeout(r, 300_000))
+    main().catch(() => process.exit(1))
+  } else {
+    process.exit(1)
+  }
 })

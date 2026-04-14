@@ -234,20 +234,41 @@ async function switchToEntity(page: Page, entityName: string | null): Promise<bo
     return true // Already on correct company
   }
 
-  console.log(`[Monitor] Switching to: ${company.name}`)
-  await page.selectOption('#companiesSelector', company.value)
+  console.log(`[Monitor] Switching to: ${company.name} (${company.value})`)
 
+  // Navigate directly to SwitchCompany URL — same fix as discovery.ts.
+  // selectOption() doesn't trigger SECOP's WS-Federation redirect chain.
+  const switchUrl = `${SECOP.switchCompanyUrl}?companyCode=${company.value}`
+  await page.goto(switchUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+
+  // Wait for redirect chain: SwitchCompany → ReloadSession → issue.aspx → Marketplace
   try {
     await page.waitForURL(
-      url => !url.toString().includes('ReloadSession') && !url.toString().includes('SwitchCompany'),
-      { timeout: 25_000 },
+      url => {
+        const u = url.toString()
+        return !u.includes('ReloadSession') && !u.includes('SwitchCompany') && !u.includes('issue.aspx')
+      },
+      { timeout: 20_000 },
     )
   } catch {
-    console.log('[Monitor] ReloadSession timeout — navigating directly')
+    console.log('[Monitor] Redirect chain timeout — continuing')
   }
 
-  if (!page.url().includes('SalesContractManagement')) {
-    await page.goto(SECOP.contractsUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 })
+  // Navigate to contracts page fresh with new company context
+  await page.goto(SECOP.contractsUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  await page.waitForTimeout(2_000)
+
+  // Verify active company
+  const activeCompany = await page.evaluate(() => {
+    const sel = document.querySelector('#companiesSelector') as HTMLSelectElement | null
+    if (!sel) return null
+    const opt = sel.options[sel.selectedIndex]
+    return opt ? (opt.getAttribute('title') || opt.textContent || '').trim() : null
+  })
+  console.log(`[Monitor] Active company: ${activeCompany}`)
+
+  if (activeCompany && !activeCompany.toUpperCase().includes(target)) {
+    console.warn(`[Monitor] WARNING: Expected ${entityName} but got ${activeCompany}`)
   }
 
   return true
