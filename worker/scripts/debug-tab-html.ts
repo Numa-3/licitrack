@@ -160,86 +160,82 @@ async function main() {
     }
   }
 
-  // Skip tab 2 click for now — we need to know structure first
-  console.log('\n(skipping tab 2 click — need to identify structure first)')
+  const cheerio = await import('cheerio')
 
-  // Click tab 2 (info general)
-  const tab2Exists = await page.evaluate(() => !!document.querySelector('#stepDiv_2'))
-  if (tab2Exists) {
-    const resp = page.waitForResponse(
-      r => r.url().includes('StepManagerGoToStep'),
-      { timeout: 15_000 }
-    ).catch(() => null)
-    await page.click('#stepDiv_2')
-    await resp
-    await page.waitForTimeout(2_000)
-
-    const tab2Html = await page.content()
-    writeFileSync('debug-tab2.html', tab2Html)
-    console.log(`Saved debug-tab2.html (${tab2Html.length} bytes)`)
-
-    // Parse HTML with cheerio to avoid page.evaluate bugs
-    const cheerio = await import('cheerio')
-    const $ = cheerio.load(tab2Html)
-
-    // Get text/value from any element by id
-    const get = (id: string): string => {
-      const el = $(`#${id}`)
-      if (!el.length) return '[NOT FOUND]'
-      const text = el.text().trim()
-      const val = el.attr('value')
-      return text || val || '[EMPTY]'
-    }
-
-    console.log('\n--- Testing original selectors ---')
-    const originalSelectors = [
-      'spnContractState',
-      'txtContractReference1Gen',
-      'txaContractDescription1Gen',
-      'spnContractUniqueIdentifier',
-      'cbxContractValue1Gen',
-      'dtmbContractStartDate_txt',
-      'dtmbContractEndDate_txt',
-      'lblSupplierName',
-    ]
-    for (const id of originalSelectors) {
-      console.log(`  #${id}: ${get(id).substring(0, 80)}`)
-    }
-
-    // Collect all relevant IDs with short samples
-    console.log('\n--- All relevant IDs in tab 2 HTML ---')
+  // Helper: extract relevant IDs from HTML
+  const dumpRelevant = (html: string, label: string) => {
+    const $ = cheerio.load(html)
+    console.log(`\n=== ${label} ===`)
     const relevant: string[] = []
     $('[id]').each((_, el) => {
       const id = $(el).attr('id') || ''
       const low = id.toLowerCase()
+      // Focus on things that look like data fields (short IDs, not container wrappers)
+      if (id.length > 80) return
       if (
         low.includes('contract') ||
         low.includes('description') ||
         low.includes('supplier') ||
         low.includes('state') ||
-        low.includes('date') ||
         low.includes('value') ||
         low.includes('reference') ||
         low.includes('objet') ||
         low.includes('proveedor') ||
         low.includes('estado') ||
-        low.includes('fecha') ||
         low.includes('identif') ||
-        low.includes('version')
+        low.includes('version') ||
+        low.startsWith('spn') ||
+        low.startsWith('txt') ||
+        low.startsWith('txa') ||
+        low.startsWith('lbl') ||
+        low.startsWith('cbx')
       ) {
         const $el = $(el)
-        const text = $el.text().trim().replace(/\s+/g, ' ').substring(0, 80)
-        const val = $el.attr('value')?.substring(0, 80) || ''
-        const tag = (el as { tagName?: string }).tagName || 'unknown'
-        const content = text || val || '[empty]'
-        relevant.push(`  <${tag}> #${id} = "${content}"`)
+        const text = $el.clone().children().remove().end().text().trim().replace(/\s+/g, ' ').substring(0, 100)
+        const val = $el.attr('value')?.substring(0, 100) || ''
+        const tag = (el as { tagName?: string }).tagName || '?'
+        const content = text || val
+        if (content && content !== '[empty]') {
+          relevant.push(`  <${tag}> #${id} = "${content}"`)
+        }
       }
     })
-    console.log(`Total: ${relevant.length}`)
+    console.log(`Total with content: ${relevant.length}`)
     relevant.forEach(s => console.log(s))
-  } else {
-    console.log('Tab 2 not found!')
   }
+
+  // Click each tab and save HTML
+  const tabs: { num: number; html: string }[] = []
+
+  // First: grab initial page content
+  tabs.push({ num: 0, html: initialHtml })
+
+  // Click tabs 1, 2, 3, 9 (ones we care about most)
+  for (const tabNum of [1, 2, 3, 9]) {
+    const tabExists = await page.evaluate((n) => !!document.querySelector(`#stepDiv_${n}`), tabNum)
+    if (!tabExists) continue
+    try {
+      const resp = page.waitForResponse(
+        r => r.url().includes('StepManagerGoToStep'),
+        { timeout: 15_000 }
+      ).catch(() => null)
+      await page.click(`#stepDiv_${tabNum}`)
+      await resp
+      await page.waitForTimeout(2_000)
+      const html = await page.content()
+      writeFileSync(`debug-tab${tabNum}.html`, html)
+      console.log(`Saved debug-tab${tabNum}.html (${html.length} bytes)`)
+      tabs.push({ num: tabNum, html })
+    } catch (e) {
+      console.log(`Error clicking tab ${tabNum}:`, e)
+    }
+  }
+
+  // Dump relevant IDs from each saved tab
+  for (const { num, html } of tabs) {
+    dumpRelevant(html, num === 0 ? 'INITIAL PAGE (before any tab click)' : `TAB ${num}`)
+  }
+
 
   await browser.close()
   console.log('\nDone')
