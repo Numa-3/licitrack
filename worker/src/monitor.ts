@@ -32,15 +32,15 @@ type MonitoredProcess = {
 // SECOP uses 10 stepDivs: stepDiv_1 is "Modificación pendiente" (skip),
 // actual content tabs are stepDiv_2 through stepDiv_10.
 const TABS = [
-  { num: 2,  slug: 'info-general',     parser: 'info_general' },
-  { num: 3,  slug: 'condiciones',       parser: 'condiciones' },
-  { num: 4,  slug: 'bienes-servicios',  parser: 'bienes_servicios' },
-  { num: 5,  slug: 'docs-proveedor',    parser: 'docs_proveedor' },
-  { num: 6,  slug: 'docs-contrato',     parser: 'docs_contrato' },
-  { num: 7,  slug: 'presupuestal',      parser: 'presupuestal' },
-  { num: 8,  slug: 'ejecucion',         parser: 'ejecucion' },
-  { num: 9,  slug: 'modificaciones',    parser: 'modificaciones' },
-  { num: 10, slug: 'incumplimientos',   parser: 'incumplimientos' },
+  { num: 1, slug: 'info-general',     parser: 'info_general' },
+  { num: 2, slug: 'condiciones',       parser: 'condiciones' },
+  { num: 3, slug: 'bienes-servicios',  parser: 'bienes_servicios' },
+  { num: 4, slug: 'docs-proveedor',    parser: 'docs_proveedor' },
+  { num: 5, slug: 'docs-contrato',     parser: 'docs_contrato' },
+  { num: 6, slug: 'presupuestal',      parser: 'presupuestal' },
+  { num: 7, slug: 'ejecucion',         parser: 'ejecucion' },
+  { num: 8, slug: 'modificaciones',    parser: 'modificaciones' },
+  { num: 9, slug: 'incumplimientos',   parser: 'incumplimientos' },
 ] as const
 
 /**
@@ -410,8 +410,8 @@ async function monitorProcess(
     last_monitored_at: new Date().toISOString(),
     next_deadline: deadline,
     next_deadline_label: label,
-    // Also update estado from latest scrape
     estado: snapshot.info_general.estado,
+    ...(snapshot.info_general.descripcion ? { objeto: snapshot.info_general.descripcion } : {}),
   }).eq('id', proc.id)
 
   if (changes.length > 0) {
