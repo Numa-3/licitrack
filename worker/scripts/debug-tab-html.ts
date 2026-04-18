@@ -63,21 +63,64 @@ async function main() {
   console.log(`Opening: ${contractUrl}`)
 
   await page.goto(contractUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-  await page.waitForTimeout(3_000)
+  await page.waitForTimeout(5_000)
 
-  // Save initial page (tab 1 or default tab)
+  // Where did we end up?
+  console.log(`\nFinal URL: ${page.url()}`)
+  console.log(`Page title: ${await page.title()}`)
+
+  // Save initial page
   const initialHtml = await page.content()
   writeFileSync('debug-initial.html', initialHtml)
   console.log(`Saved debug-initial.html (${initialHtml.length} bytes)`)
 
-  // Check what tabs exist
-  for (let i = 1; i <= 12; i++) {
-    const exists = await page.evaluate((n) => {
-      const el = document.querySelector(`#stepDiv_${n}`)
-      return el ? (el as HTMLElement).innerText.substring(0, 50) : null
-    }, i)
-    if (exists) console.log(`  Tab ${i}: "${exists}"`)
+  // Check redirects/login
+  if (page.url().toLowerCase().includes('login')) {
+    console.log('❌ Redirected to login — session expired')
+    await browser.close()
+    return
   }
+
+  // Check what tabs exist (broader search)
+  console.log('\n--- Looking for step divs ---')
+  const stepInfo = await page.evaluate(() => {
+    const result: Record<string, unknown> = {}
+    result.hasStpmStepManager = !!document.querySelector('#stpmStepManager')
+    result.allStepDivs = Array.from(document.querySelectorAll('[id^="stepDiv_"]')).map(e => e.id)
+    result.allStpm = Array.from(document.querySelectorAll('[id^="stpm"]')).map(e => e.id).slice(0, 20)
+    result.bodyClass = document.body.className
+    result.h1Text = document.querySelector('h1')?.textContent?.trim().substring(0, 100)
+    result.titleBars = Array.from(document.querySelectorAll('.titleBar, .pageTitle, .formTitle')).map(e => e.textContent?.trim().substring(0, 80))
+    // Count all IDs
+    result.totalIds = document.querySelectorAll('[id]').length
+    return result
+  })
+  console.log(JSON.stringify(stepInfo, null, 2))
+
+  // If no stepDiv, try iframes (SECOP often renders content inside iframes)
+  console.log('\n--- Iframes ---')
+  const frames = page.frames()
+  console.log(`Total frames: ${frames.length}`)
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i]
+    console.log(`  [${i}] URL: ${f.url().substring(0, 120)}`)
+    try {
+      const stepInFrame = await f.evaluate(() => {
+        return {
+          stepDivs: Array.from(document.querySelectorAll('[id^="stepDiv_"]')).map(e => e.id),
+          hasStpm: !!document.querySelector('#stpmStepManager'),
+        }
+      })
+      if (stepInFrame.stepDivs.length > 0 || stepInFrame.hasStpm) {
+        console.log(`    ✓ Found step structure in frame [${i}]:`, stepInFrame)
+      }
+    } catch (e) {
+      // cross-origin frame
+    }
+  }
+
+  // Skip tab 2 click for now — we need to know structure first
+  console.log('\n(skipping tab 2 click — need to identify structure first)')
 
   // Click tab 2 (info general)
   const tab2Exists = await page.evaluate(() => !!document.querySelector('#stepDiv_2'))
