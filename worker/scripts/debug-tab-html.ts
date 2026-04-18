@@ -178,51 +178,65 @@ async function main() {
     writeFileSync('debug-tab2.html', tab2Html)
     console.log(`Saved debug-tab2.html (${tab2Html.length} bytes)`)
 
-    // Try to find the selectors we use
-    const fields = await page.evaluate(() => {
-      const get = (sel: string) => {
-        const el = document.querySelector(sel)
-        return el ? (el as HTMLElement).innerText?.substring(0, 100) || el.getAttribute('value') || '[empty]' : null
-      }
-      return {
-        spnContractState: get('#spnContractState'),
-        txtContractReference1Gen: get('#txtContractReference1Gen'),
-        txaContractDescription1Gen: get('#txaContractDescription1Gen'),
-        spnContractUniqueIdentifier: get('#spnContractUniqueIdentifier'),
-        cbxContractValue1Gen: get('#cbxContractValue1Gen'),
-        dtmbContractStartDate_txt: get('#dtmbContractStartDate_txt'),
-        dtmbContractEndDate_txt: get('#dtmbContractEndDate_txt'),
-        lblSupplierName: get('#lblSupplierName'),
-      }
-    })
-    console.log('\nSelector results:')
-    for (const [k, v] of Object.entries(fields)) {
-      console.log(`  ${k}: ${v ?? '❌ NOT FOUND'}`)
+    // Parse HTML with cheerio to avoid page.evaluate bugs
+    const cheerio = await import('cheerio')
+    const $ = cheerio.load(tab2Html)
+
+    // Get text/value from any element by id
+    const get = (id: string): string => {
+      const el = $(`#${id}`)
+      if (!el.length) return '[NOT FOUND]'
+      const text = el.text().trim()
+      const val = el.attr('value')
+      return text || val || '[EMPTY]'
     }
 
-    // Find any input/span/textarea with contract-related IDs
-    const allIds = await page.evaluate(() => {
-      const elements = document.querySelectorAll('[id]')
-      const ids: string[] = []
-      elements.forEach(el => {
-        const id = el.id
-        if (id && (
-          id.toLowerCase().includes('contract') ||
-          id.toLowerCase().includes('description') ||
-          id.toLowerCase().includes('supplier') ||
-          id.toLowerCase().includes('state') ||
-          id.toLowerCase().includes('date') ||
-          id.toLowerCase().includes('value') ||
-          id.toLowerCase().includes('reference')
-        )) {
-          const text = (el as HTMLElement).innerText?.substring(0, 80) || el.getAttribute('value')?.substring(0, 80) || ''
-          ids.push(`${id} = "${text}"`)
-        }
-      })
-      return ids
+    console.log('\n--- Testing original selectors ---')
+    const originalSelectors = [
+      'spnContractState',
+      'txtContractReference1Gen',
+      'txaContractDescription1Gen',
+      'spnContractUniqueIdentifier',
+      'cbxContractValue1Gen',
+      'dtmbContractStartDate_txt',
+      'dtmbContractEndDate_txt',
+      'lblSupplierName',
+    ]
+    for (const id of originalSelectors) {
+      console.log(`  #${id}: ${get(id).substring(0, 80)}`)
+    }
+
+    // Collect all relevant IDs with short samples
+    console.log('\n--- All relevant IDs in tab 2 HTML ---')
+    const relevant: string[] = []
+    $('[id]').each((_, el) => {
+      const id = $(el).attr('id') || ''
+      const low = id.toLowerCase()
+      if (
+        low.includes('contract') ||
+        low.includes('description') ||
+        low.includes('supplier') ||
+        low.includes('state') ||
+        low.includes('date') ||
+        low.includes('value') ||
+        low.includes('reference') ||
+        low.includes('objet') ||
+        low.includes('proveedor') ||
+        low.includes('estado') ||
+        low.includes('fecha') ||
+        low.includes('identif') ||
+        low.includes('version')
+      ) {
+        const $el = $(el)
+        const text = $el.text().trim().replace(/\s+/g, ' ').substring(0, 80)
+        const val = $el.attr('value')?.substring(0, 80) || ''
+        const tag = (el as { tagName?: string }).tagName || 'unknown'
+        const content = text || val || '[empty]'
+        relevant.push(`  <${tag}> #${id} = "${content}"`)
+      }
     })
-    console.log(`\nAll contract-related IDs (${allIds.length}):`)
-    allIds.forEach(id => console.log(`  ${id}`))
+    console.log(`Total: ${relevant.length}`)
+    relevant.forEach(s => console.log(s))
   } else {
     console.log('Tab 2 not found!')
   }
