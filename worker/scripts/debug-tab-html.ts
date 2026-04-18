@@ -59,8 +59,49 @@ async function main() {
     process.exit(1)
   }
 
+  // 1. Open contracts page first to load company selector
+  console.log(`\nLoading contracts page to get company list...`)
+  await page.goto(SECOP.contractsUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  await page.waitForTimeout(2_000)
+
+  // 2. Switch to the correct company for this contract
+  if (proc.entity_name) {
+    const companies = await page.evaluate(() => {
+      const sel = document.querySelector('#companiesSelector') as HTMLSelectElement | null
+      if (!sel) return []
+      return Array.from(sel.options).map(o => ({
+        name: (o.getAttribute('title') || o.textContent || '').trim(),
+        value: o.value,
+      })).filter(c => c.name && c.value)
+    })
+    console.log(`Found ${companies.length} companies`)
+
+    const target = proc.entity_name.toUpperCase()
+    const company = companies.find(c =>
+      c.name.toUpperCase() === target || c.name.toUpperCase().includes(target)
+    )
+    if (!company) {
+      console.error(`❌ Company "${proc.entity_name}" not found`)
+      await browser.close()
+      process.exit(1)
+    }
+    console.log(`Switching to: ${company.name} (${company.value})`)
+
+    const switchUrl = `${SECOP.switchCompanyUrl}?companyCode=${company.value}`
+    await page.goto(switchUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    try {
+      await page.waitForURL(url => {
+        const u = url.toString()
+        return !u.includes('ReloadSession') && !u.includes('SwitchCompany') && !u.includes('issue.aspx')
+      }, { timeout: 20_000 })
+    } catch { console.log('Redirect chain timeout — continuing') }
+    await page.waitForTimeout(2_000)
+    console.log(`After switch, URL: ${page.url()}`)
+  }
+
+  // 3. Now navigate to the contract detail
   const contractUrl = SECOP.contractDetailUrl(match[1])
-  console.log(`Opening: ${contractUrl}`)
+  console.log(`\nOpening contract: ${contractUrl}`)
 
   await page.goto(contractUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
   await page.waitForTimeout(5_000)
