@@ -540,6 +540,7 @@ function AddProcessModal({ onAdd, onClose }: {
 }) {
   const [input, setInput] = useState('')
   const [tipo, setTipo] = useState<'precontractual' | 'contractual'>('precontractual')
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{ message?: string; error?: string } | null>(null)
 
@@ -561,33 +562,14 @@ function AddProcessModal({ onAdd, onClose }: {
       <div className="absolute inset-0 bg-black/40" />
       <div className="relative bg-white rounded-xl p-6 w-full max-w-md shadow-xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-gray-900">Agregar proceso</h3>
+          <h3 className="font-semibold text-gray-900">Agregar proceso precontractual</h3>
           <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">Tipo de proceso</label>
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setTipo('precontractual')}
-                className={`px-3 py-2 text-sm rounded-md border text-left ${
-                  tipo === 'precontractual'
-                    ? 'bg-gray-900 text-white border-gray-900'
-                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}>
-                <div className="font-medium">Precontractual</div>
-                <div className="text-[10px] opacity-75 mt-0.5">Proceso público, sin adjudicar</div>
-              </button>
-              <button type="button" onClick={() => setTipo('contractual')}
-                className={`px-3 py-2 text-sm rounded-md border text-left ${
-                  tipo === 'contractual'
-                    ? 'bg-gray-900 text-white border-gray-900'
-                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}>
-                <div className="font-medium">En ejecución</div>
-                <div className="text-[10px] opacity-75 mt-0.5">Contrato ya adjudicado</div>
-              </button>
-            </div>
-          </div>
+          <p className="text-xs text-gray-500 -mt-1">
+            Los contratos ya adjudicados en tus cuentas SECOP se descubren automáticamente.
+            Esta opción es para trackear procesos públicos abiertos (sin adjudicar).
+          </p>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
               {isPrecontractual ? 'Link público del proceso (OpportunityDetail)' : 'URL de SECOP, NTC ID o referencia del proceso'}
@@ -600,8 +582,37 @@ function AddProcessModal({ onAdd, onClose }: {
             <p className="text-[10px] text-gray-400 mt-1">
               {isPrecontractual
                 ? 'Usa la API pública SECOP II (sin login). Trackea cronograma, estado, fase y adjudicación.'
-                : 'Se busca primero en la API pública. Requiere cuenta SECOP configurada para monitorear las 6 pestañas.'}
+                : 'Forzar carga manual de un contrato adjudicado. Requiere cuenta SECOP configurada para monitorear las 6 pestañas.'}
             </p>
+          </div>
+          <div className="border-t border-gray-100 pt-3">
+            <button type="button" onClick={() => {
+              setShowAdvanced(v => !v)
+              if (showAdvanced) setTipo('precontractual')
+            }}
+              className="text-[11px] text-gray-500 hover:text-gray-700 flex items-center gap-1">
+              {showAdvanced ? '▼' : '▶'} Opciones avanzadas
+            </button>
+            {showAdvanced && (
+              <div className="mt-2 space-y-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" checked={tipo === 'precontractual'}
+                    onChange={() => setTipo('precontractual')} className="mt-0.5" />
+                  <div>
+                    <div className="text-xs font-medium text-gray-800">Precontractual</div>
+                    <div className="text-[10px] text-gray-500">Proceso público, sin adjudicar (default)</div>
+                  </div>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" checked={tipo === 'contractual'}
+                    onChange={() => setTipo('contractual')} className="mt-0.5" />
+                  <div>
+                    <div className="text-xs font-medium text-gray-800">Forzar contrato manual</div>
+                    <div className="text-[10px] text-gray-500">Solo si el discovery lo saltó o para re-activar monitoreo</div>
+                  </div>
+                </label>
+              </div>
+            )}
           </div>
           {result && (
             <div className={`p-3 rounded-lg text-sm ${result.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
