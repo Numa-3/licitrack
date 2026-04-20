@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
 import type { PrecontractualSnapshot, PrecontractualChangeRecord } from './types.js'
+import { cleanDateString } from '../utils/date-format.js'
 
 /**
  * Hash used to detect whether anything we care about changed, so we can skip
@@ -144,7 +145,7 @@ export function diffPrecontractualSnapshots(
         priority: 'high',
         before_json: { fecha_recepcion: bLast.fecha_recepcion },
         after_json: { fecha_recepcion: aLast.fecha_recepcion },
-        summary: `Fecha de recepción cambió: ${bLast.fecha_recepcion} → ${aLast.fecha_recepcion}`,
+        summary: `Fecha recepción: ${cleanDateString(bLast.fecha_recepcion)} → ${cleanDateString(aLast.fecha_recepcion)}`,
       })
     }
     if (
@@ -157,7 +158,7 @@ export function diffPrecontractualSnapshots(
         priority: 'high',
         before_json: { fecha_apertura_efectiva: bLast.fecha_apertura_efectiva },
         after_json: { fecha_apertura_efectiva: aLast.fecha_apertura_efectiva },
-        summary: `Fecha de apertura cambió: ${bLast.fecha_apertura_efectiva} → ${aLast.fecha_apertura_efectiva}`,
+        summary: `Fecha apertura: ${cleanDateString(bLast.fecha_apertura_efectiva)} → ${cleanDateString(aLast.fecha_apertura_efectiva)}`,
       })
     }
 
@@ -186,7 +187,7 @@ export function diffPrecontractualSnapshots(
           priority: 'medium',
           before_json: null,
           after_json: ev,
-          summary: `Nuevo evento en cronograma: ${nombre}${ev.fecha_fin ? ` — vence ${ev.fecha_fin}` : ''}`,
+          summary: `Nuevo evento: ${nombre}${ev.fecha_fin ? ` — vence ${cleanDateString(ev.fecha_fin)}` : ''}`,
         })
       }
     }
@@ -210,8 +211,8 @@ export function diffPrecontractualSnapshots(
       const endChanged = bEv.fecha_fin !== aEv.fecha_fin
       if (startChanged || endChanged) {
         const parts: string[] = []
-        if (startChanged) parts.push(`inicio ${bEv.fecha_inicio || '?'} → ${aEv.fecha_inicio || '?'}`)
-        if (endChanged) parts.push(`fin ${bEv.fecha_fin || '?'} → ${aEv.fecha_fin || '?'}`)
+        if (startChanged) parts.push(`inicio ${cleanDateString(bEv.fecha_inicio)} → ${cleanDateString(aEv.fecha_inicio)}`)
+        if (endChanged) parts.push(`fin ${cleanDateString(bEv.fecha_fin)} → ${cleanDateString(aEv.fecha_fin)}`)
         changes.push({
           change_type: 'cronograma_event_changed',
           priority: 'high',

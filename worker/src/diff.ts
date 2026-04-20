@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { cleanDateString } from './utils/date-format.js'
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -202,7 +203,7 @@ export function diffSnapshots(
       priority: 'high',
       before_json: { fecha_fin: before.info_general.fecha_fin },
       after_json: { fecha_fin: after.info_general.fecha_fin },
-      summary: `Fecha fin cambió: ${before.info_general.fecha_fin} → ${after.info_general.fecha_fin}`,
+      summary: `Fecha fin: ${cleanDateString(before.info_general.fecha_fin)} → ${cleanDateString(after.info_general.fecha_fin)}`,
     })
   }
 
@@ -242,6 +243,8 @@ export function diffSnapshots(
   // Skip si antes no había docs (onboarding) o si after está vacío pero before
   // tenía (probablemente scrape fallido — página de 9807 bytes).
   if (before.docs_contrato.documents.length > 0 && after.docs_contrato.documents.length > 0) {
+    const beforeCount = before.docs_contrato.documents.length
+    const afterCount = after.docs_contrato.documents.length
     const beforeDocNames = new Set(before.docs_contrato.documents.map(d => d.name))
     const newDocs = after.docs_contrato.documents.filter(d => !beforeDocNames.has(d.name))
     for (const doc of newDocs) {
@@ -250,13 +253,15 @@ export function diffSnapshots(
         priority: 'medium',
         before_json: null,
         after_json: doc,
-        summary: `Nuevo documento: ${doc.name}`,
+        summary: `Nuevo documento: ${doc.name} (antes: ${beforeCount} docs, ahora: ${afterCount})`,
       })
     }
   }
 
   // 7. Documentos del proveedor (Tab 4) — add/remove
   if (before.docs_proveedor.document_names.length > 0 && after.docs_proveedor.document_names.length > 0) {
+    const beforeCount = before.docs_proveedor.document_names.length
+    const afterCount = after.docs_proveedor.document_names.length
     const beforeProvDocs = new Set(before.docs_proveedor.document_names)
     const afterProvDocs = new Set(after.docs_proveedor.document_names)
     for (const name of afterProvDocs) {
@@ -266,7 +271,7 @@ export function diffSnapshots(
           priority: 'medium',
           before_json: null,
           after_json: { name },
-          summary: `Documento del proveedor agregado: ${name}`,
+          summary: `Proveedor subió documento: ${name} (antes: ${beforeCount}, ahora: ${afterCount})`,
         })
       }
     }
@@ -277,7 +282,7 @@ export function diffSnapshots(
           priority: 'medium',
           before_json: { name },
           after_json: null,
-          summary: `Documento del proveedor eliminado: ${name}`,
+          summary: `Proveedor eliminó documento: ${name} (antes: ${beforeCount}, ahora: ${afterCount})`,
         })
       }
     }
@@ -285,6 +290,8 @@ export function diffSnapshots(
 
   // 8. Documentos de ejecución (Tab 7) — add only
   if (before.ejecucion.execution_docs.length > 0 && after.ejecucion.execution_docs.length > 0) {
+    const beforeCount = before.ejecucion.execution_docs.length
+    const afterCount = after.ejecucion.execution_docs.length
     const beforeExecDocs = new Set(before.ejecucion.execution_docs)
     for (const name of after.ejecucion.execution_docs) {
       if (!beforeExecDocs.has(name)) {
@@ -293,7 +300,7 @@ export function diffSnapshots(
           priority: 'medium',
           before_json: null,
           after_json: { name },
-          summary: `Nuevo documento de ejecución: ${name}`,
+          summary: `Documento de ejecución: ${name} (antes: ${beforeCount} docs, ahora: ${afterCount})`,
         })
       }
     }
@@ -301,6 +308,8 @@ export function diffSnapshots(
 
   // 9. New payments (Tab 7)
   if (before.ejecucion.pagos.length > 0 && after.ejecucion.pagos.length > 0) {
+    const beforeCount = before.ejecucion.pagos.length
+    const afterCount = after.ejecucion.pagos.length
     const beforePayIds = new Set(before.ejecucion.pagos.map(p => p.pago_id))
     const newPagos = after.ejecucion.pagos.filter(p => !beforePayIds.has(p.pago_id))
     for (const pago of newPagos) {
@@ -309,7 +318,7 @@ export function diffSnapshots(
         priority: 'medium',
         before_json: null,
         after_json: pago,
-        summary: `Nuevo pago: ${pago.pago_id} — ${pago.valor || '?'} — ${pago.estado || '?'}`,
+        summary: `Nuevo pago ${pago.pago_id} — ${pago.valor || '?'} — ${pago.estado || '?'} (antes: ${beforeCount} pagos, ahora: ${afterCount})`,
       })
     }
   }
@@ -339,14 +348,20 @@ export function diffSnapshots(
     before.modificaciones.entries.length > 0
     && after.modificaciones.entries.length > before.modificaciones.entries.length
   ) {
-    const newMods = after.modificaciones.entries.slice(before.modificaciones.entries.length)
+    const beforeCount = before.modificaciones.entries.length
+    const afterCount = after.modificaciones.entries.length
+    const newMods = after.modificaciones.entries.slice(beforeCount)
     for (const mod of newMods) {
+      const versionLabel = mod.version ? `v${mod.version}` : 'sin versión'
+      const fechaLabel = mod.fecha ? ` (${cleanDateString(mod.fecha)})` : ''
+      const tipoLabel = mod.tipo || 'Modificación'
+      const estadoLabel = mod.estado ? ` — ${mod.estado}` : ''
       changes.push({
         change_type: 'new_modification',
         priority: 'high',
         before_json: null,
         after_json: mod,
-        summary: `Nueva modificación: ${mod.tipo || 'Desconocida'} — ${mod.estado || '?'}`,
+        summary: `Nueva modificación ${versionLabel}${fechaLabel}: ${tipoLabel}${estadoLabel} (antes: ${beforeCount}, ahora: ${afterCount})`,
       })
     }
   }
@@ -357,6 +372,8 @@ export function diffSnapshots(
 
   // Nueva garantía — skip si antes estaba vacío (onboarding) o si after está vacío (scrape fallido).
   if (before.condiciones.garantias.length > 0 && after.condiciones.garantias.length > 0) {
+    const beforeCount = before.condiciones.garantias.length
+    const afterCount = after.condiciones.garantias.length
     for (const [id, g] of afterGarantias) {
       if (!beforeGarantias.has(id)) {
         changes.push({
@@ -364,7 +381,7 @@ export function diffSnapshots(
           priority: 'medium',
           before_json: null,
           after_json: g,
-          summary: `Nueva garantía ${id} — ${g.tipo || 'tipo ?'} — Estado: ${g.estado || '?'}`,
+          summary: `Nueva garantía ${id} — ${g.tipo || 'tipo ?'} — ${g.estado || '?'} (antes: ${beforeCount} pólizas, ahora: ${afterCount})`,
         })
       }
     }
