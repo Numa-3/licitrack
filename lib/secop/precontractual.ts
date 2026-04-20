@@ -67,7 +67,16 @@ export async function fetchProcessPhases(noticeUid: string): Promise<ApiRecord[]
   if (!/^CO1\.NTC\.\d+$/.test(noticeUid)) {
     throw new Error(`Formato inválido de noticeUID: ${noticeUid}`)
   }
-  const initial = await queryApi(`urlproceso.url like '%${noticeUid}%'`, 5)
+  // Primary lookup: noticeUID embedded in urlproceso.url
+  let initial = await queryApi(`urlproceso.url like '%${noticeUid}%'`, 5)
+
+  // Fallback: procesos re-noticeados tienen urlproceso.url apuntando al NTC
+  // viejo. SECOP comparte contador numérico entre NTC y REQ del mismo proceso.
+  if (initial.length === 0) {
+    const numericPart = noticeUid.replace(/^CO1\.NTC\./, '')
+    initial = await queryApi(`id_del_proceso='CO1.REQ.${numericPart}'`, 5)
+  }
+
   if (initial.length === 0) return []
   const portfolio = initial[0].id_del_portafolio
   if (!portfolio) return initial
