@@ -39,11 +39,14 @@ export function diffPrecontractualSnapshots(
 
   const changes: PrecontractualChangeRecord[] = []
 
-  // Guard contra ruido de onboarding: reportar solo cuando había valor previo real.
+  // Guard doble contra ruido: reportar solo cuando AMBOS valores existen y difieren.
+  // Esto previene falsos positivos por onboarding (before=null) y por scrape fallido
+  // que devuelve valores nulos (after=null).
 
   // 1. Phase changed (new fase appeared)
   if (
     before.fase_actual
+    && after.fase_actual
     && before.fase_actual !== after.fase_actual
   ) {
     changes.push({
@@ -51,13 +54,14 @@ export function diffPrecontractualSnapshots(
       priority: 'high',
       before_json: { fase: before.fase_actual },
       after_json: { fase: after.fase_actual },
-      summary: `Fase cambió: ${before.fase_actual} → ${after.fase_actual || '?'}`,
+      summary: `Fase cambió: ${before.fase_actual} → ${after.fase_actual}`,
     })
   }
 
   // 2. Estado cambió
   if (
     before.estado_actual
+    && after.estado_actual
     && before.estado_actual !== after.estado_actual
   ) {
     changes.push({
@@ -65,7 +69,7 @@ export function diffPrecontractualSnapshots(
       priority: 'high',
       before_json: { estado: before.estado_actual },
       after_json: { estado: after.estado_actual },
-      summary: `Estado cambió: ${before.estado_actual} → ${after.estado_actual || '?'}`,
+      summary: `Estado cambió: ${before.estado_actual} → ${after.estado_actual}`,
     })
   }
 
@@ -127,21 +131,25 @@ export function diffPrecontractualSnapshots(
   }
 
   // 6. Deadlines clave cambiaron (fecha_recepcion, fecha_apertura)
-  // Solo reportar cuando había valor previo real.
   const bLast = before.phases.at(-1)
   const aLast = after.phases.at(-1)
   if (bLast && aLast) {
-    if (bLast.fecha_recepcion && bLast.fecha_recepcion !== aLast.fecha_recepcion) {
+    if (
+      bLast.fecha_recepcion
+      && aLast.fecha_recepcion
+      && bLast.fecha_recepcion !== aLast.fecha_recepcion
+    ) {
       changes.push({
         change_type: 'process_deadline_changed',
         priority: 'high',
         before_json: { fecha_recepcion: bLast.fecha_recepcion },
         after_json: { fecha_recepcion: aLast.fecha_recepcion },
-        summary: `Fecha de recepción cambió: ${bLast.fecha_recepcion} → ${aLast.fecha_recepcion || '?'}`,
+        summary: `Fecha de recepción cambió: ${bLast.fecha_recepcion} → ${aLast.fecha_recepcion}`,
       })
     }
     if (
       bLast.fecha_apertura_efectiva
+      && aLast.fecha_apertura_efectiva
       && bLast.fecha_apertura_efectiva !== aLast.fecha_apertura_efectiva
     ) {
       changes.push({
@@ -149,7 +157,7 @@ export function diffPrecontractualSnapshots(
         priority: 'high',
         before_json: { fecha_apertura_efectiva: bLast.fecha_apertura_efectiva },
         after_json: { fecha_apertura_efectiva: aLast.fecha_apertura_efectiva },
-        summary: `Fecha de apertura cambió: ${bLast.fecha_apertura_efectiva} → ${aLast.fecha_apertura_efectiva || '?'}`,
+        summary: `Fecha de apertura cambió: ${bLast.fecha_apertura_efectiva} → ${aLast.fecha_apertura_efectiva}`,
       })
     }
 

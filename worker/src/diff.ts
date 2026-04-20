@@ -156,13 +156,15 @@ export function diffSnapshots(
 
   const changes: ChangeRecord[] = []
 
-  // Guard contra ruido de onboarding: si el valor "antes" no existía (null/empty),
-  // el snapshot previo tenía el campo sin capturar — es un descubrimiento, no un cambio.
-  // Solo reportamos cuando SÍ había valor previo Y ese valor cambió.
+  // Guard doble contra ruido:
+  //   - before null/empty → onboarding (primer scrape, no es cambio real)
+  //   - after null/empty  → scrape falló (sesión expirada, página vacía, etc.)
+  // Solo reportamos cambios donde AMBOS valores existen Y son distintos.
 
   // 1. Estado del contrato
   if (
     before.info_general.estado
+    && after.info_general.estado
     && before.info_general.estado !== after.info_general.estado
   ) {
     changes.push({
@@ -170,13 +172,14 @@ export function diffSnapshots(
       priority: 'high',
       before_json: { estado: before.info_general.estado },
       after_json: { estado: after.info_general.estado },
-      summary: `Estado cambió: ${before.info_general.estado} → ${after.info_general.estado || '?'}`,
+      summary: `Estado cambió: ${before.info_general.estado} → ${after.info_general.estado}`,
     })
   }
 
   // 2. Valor del contrato
   if (
     before.info_general.valor
+    && after.info_general.valor
     && before.info_general.valor !== after.info_general.valor
   ) {
     changes.push({
@@ -184,13 +187,14 @@ export function diffSnapshots(
       priority: 'high',
       before_json: { valor: before.info_general.valor },
       after_json: { valor: after.info_general.valor },
-      summary: `Valor cambió: ${before.info_general.valor} → ${after.info_general.valor || '?'}`,
+      summary: `Valor cambió: ${before.info_general.valor} → ${after.info_general.valor}`,
     })
   }
 
   // 3. Fechas clave
   if (
     before.info_general.fecha_fin
+    && after.info_general.fecha_fin
     && before.info_general.fecha_fin !== after.info_general.fecha_fin
   ) {
     changes.push({
@@ -198,7 +202,7 @@ export function diffSnapshots(
       priority: 'high',
       before_json: { fecha_fin: before.info_general.fecha_fin },
       after_json: { fecha_fin: after.info_general.fecha_fin },
-      summary: `Fecha fin cambió: ${before.info_general.fecha_fin} → ${after.info_general.fecha_fin || '?'}`,
+      summary: `Fecha fin cambió: ${before.info_general.fecha_fin} → ${after.info_general.fecha_fin}`,
     })
   }
 
@@ -222,6 +226,7 @@ export function diffSnapshots(
   // 5. Version changed (implies otrosi/modification was applied)
   if (
     before.info_general.version
+    && after.info_general.version
     && before.info_general.version !== after.info_general.version
   ) {
     changes.push({
@@ -229,13 +234,14 @@ export function diffSnapshots(
       priority: 'high',
       before_json: { version: before.info_general.version },
       after_json: { version: after.info_general.version },
-      summary: `Versión cambió: ${before.info_general.version} → ${after.info_general.version || '?'}`,
+      summary: `Versión cambió: ${before.info_general.version} → ${after.info_general.version}`,
     })
   }
 
   // 6. New documents del contrato (Tab 5)
-  // Skip onboarding: si antes no había docs capturados, no reportar todos como nuevos.
-  if (before.docs_contrato.documents.length > 0) {
+  // Skip si antes no había docs (onboarding) o si after está vacío pero before
+  // tenía (probablemente scrape fallido — página de 9807 bytes).
+  if (before.docs_contrato.documents.length > 0 && after.docs_contrato.documents.length > 0) {
     const beforeDocNames = new Set(before.docs_contrato.documents.map(d => d.name))
     const newDocs = after.docs_contrato.documents.filter(d => !beforeDocNames.has(d.name))
     for (const doc of newDocs) {
@@ -250,8 +256,7 @@ export function diffSnapshots(
   }
 
   // 7. Documentos del proveedor (Tab 4) — add/remove
-  // Skip onboarding: si antes estaba vacío, no reportar.
-  if (before.docs_proveedor.document_names.length > 0) {
+  if (before.docs_proveedor.document_names.length > 0 && after.docs_proveedor.document_names.length > 0) {
     const beforeProvDocs = new Set(before.docs_proveedor.document_names)
     const afterProvDocs = new Set(after.docs_proveedor.document_names)
     for (const name of afterProvDocs) {
@@ -279,8 +284,7 @@ export function diffSnapshots(
   }
 
   // 8. Documentos de ejecución (Tab 7) — add only
-  // Skip onboarding: si antes no había, no reportar.
-  if (before.ejecucion.execution_docs.length > 0) {
+  if (before.ejecucion.execution_docs.length > 0 && after.ejecucion.execution_docs.length > 0) {
     const beforeExecDocs = new Set(before.ejecucion.execution_docs)
     for (const name of after.ejecucion.execution_docs) {
       if (!beforeExecDocs.has(name)) {
@@ -296,8 +300,7 @@ export function diffSnapshots(
   }
 
   // 9. New payments (Tab 7)
-  // Skip onboarding: si antes no había pagos capturados, no reportar todos como nuevos.
-  if (before.ejecucion.pagos.length > 0) {
+  if (before.ejecucion.pagos.length > 0 && after.ejecucion.pagos.length > 0) {
     const beforePayIds = new Set(before.ejecucion.pagos.map(p => p.pago_id))
     const newPagos = after.ejecucion.pagos.filter(p => !beforePayIds.has(p.pago_id))
     for (const pago of newPagos) {
@@ -312,23 +315,26 @@ export function diffSnapshots(
   }
 
   // 10. Payment state changes (Tab 7)
-  // Este NO requiere guard de onboarding: solo dispara cuando ambos snapshots tienen
-  // el mismo pago_id con estado distinto (cambio real de estado del pago).
+  // Requiere que ambos estados existan.
   for (const afterPago of after.ejecucion.pagos) {
     const beforePago = before.ejecucion.pagos.find(p => p.pago_id === afterPago.pago_id)
-    if (beforePago && beforePago.estado && beforePago.estado !== afterPago.estado) {
+    if (
+      beforePago
+      && beforePago.estado
+      && afterPago.estado
+      && beforePago.estado !== afterPago.estado
+    ) {
       changes.push({
         change_type: 'payment_state_changed',
         priority: 'medium',
         before_json: beforePago,
         after_json: afterPago,
-        summary: `${afterPago.pago_id}: ${beforePago.estado} → ${afterPago.estado || '?'}`,
+        summary: `${afterPago.pago_id}: ${beforePago.estado} → ${afterPago.estado}`,
       })
     }
   }
 
   // 11. New modifications (Tab 8)
-  // Skip onboarding: si antes no había modificaciones capturadas, no reportar todas como nuevas.
   if (
     before.modificaciones.entries.length > 0
     && after.modificaciones.entries.length > before.modificaciones.entries.length
@@ -349,8 +355,8 @@ export function diffSnapshots(
   const beforeGarantias = new Map(before.condiciones.garantias.map(g => [g.garantia_id, g]))
   const afterGarantias = new Map(after.condiciones.garantias.map(g => [g.garantia_id, g]))
 
-  // Nueva garantía — skip onboarding: si antes no había garantías, no reportar.
-  if (before.condiciones.garantias.length > 0) {
+  // Nueva garantía — skip si antes estaba vacío (onboarding) o si after está vacío (scrape fallido).
+  if (before.condiciones.garantias.length > 0 && after.condiciones.garantias.length > 0) {
     for (const [id, g] of afterGarantias) {
       if (!beforeGarantias.has(id)) {
         changes.push({
@@ -365,10 +371,10 @@ export function diffSnapshots(
   }
 
   // Cambio de estado / vencida
-  // Requiere que ambos snapshots tengan la póliza con estado previo real.
+  // Requiere que ambos estados existan y sean distintos.
   for (const [id, afterG] of afterGarantias) {
     const beforeG = beforeGarantias.get(id)
-    if (!beforeG || !beforeG.estado) continue
+    if (!beforeG || !beforeG.estado || !afterG.estado) continue
 
     if (beforeG.estado !== afterG.estado) {
       const isRejected = (afterG.estado || '').toLowerCase().includes('rechaz')
