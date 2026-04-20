@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
-import { formatCurrency } from '@/lib/utils/format'
+import { formatCurrency, timeAgo } from '@/lib/utils/format'
 import {
   FileText, ClipboardList, Truck, Receipt,
   AlertTriangle, Clock, FileWarning, TrendingDown,
@@ -110,18 +110,6 @@ const ACTION_LABELS: Record<string, string> = {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
-function timeAgo(dateStr: string): string {
-  const diffMs = Date.now() - new Date(dateStr).getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-  if (diffMin < 1) return 'justo ahora'
-  if (diffMin < 60) return `hace ${diffMin}m`
-  const diffHrs = Math.floor(diffMin / 60)
-  if (diffHrs < 24) return `hace ${diffHrs}h`
-  const diffDays = Math.floor(diffHrs / 24)
-  if (diffDays === 1) return 'ayer'
-  return `hace ${diffDays}d`
-}
-
 function getInitials(name: string): string {
   return name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
 }

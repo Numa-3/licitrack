@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
+import { timeAgo } from '@/lib/utils/format'
 
 // ── Types ──────────────────────────────────────────────────────
 type Profile = { id: string; name: string; role: string }
@@ -46,20 +47,6 @@ const ENTITY_LABELS: Record<string, string> = {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
-function timeAgo(dateStr: string): string {
-  const now = new Date()
-  const date = new Date(dateStr)
-  const diffMs = now.getTime() - date.getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-  if (diffMin < 1) return 'justo ahora'
-  if (diffMin < 60) return `hace ${diffMin} min`
-  const diffHrs = Math.floor(diffMin / 60)
-  if (diffHrs < 24) return `hace ${diffHrs}h`
-  const diffDays = Math.floor(diffHrs / 24)
-  if (diffDays === 1) return 'ayer'
-  if (diffDays < 7) return `hace ${diffDays} días`
-  return new Date(dateStr).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })
-}
 
 function getInitials(name: string): string {
   return name

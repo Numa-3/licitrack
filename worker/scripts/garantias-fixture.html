@@ -1,0 +1,197 @@
+<!--
+  Synthetic HTML fixture for testing parseCondiciones().
+  - Top section uses the real IDs and structure captured from the user's SECOP sample
+  - Bottom section simulates the 4 warranty rows visible in the user's screenshot
+    (the mid-to-bottom part of the real HTML exceeded the 50k char chat limit)
+-->
+<div id="stphStepsPlaceHolder_stpContractConditionsStep" class="PlaceHolderDisplay">
+
+  <!-- Condiciones ejecución y entrega -->
+  <fieldset id="fdsFinancialAndDeliveryConditionsP2Gen">
+    <table class="Form">
+      <tbody>
+        <tr>
+          <td class="Label"><span>Condiciones de entrega</span></td>
+          <td class="Field"><span id="selIncoterm">A definir</span></td>
+        </tr>
+        <tr>
+          <td class="Label"><span>El contrato puede ser prorrogado</span></td>
+          <td class="Field">
+            <div id="rdbgRenewableContract">
+              <input id="rdbgRenewableContract_0" type="radio" value="true">
+              <label for="rdbgRenewableContract_0">Sí</label>
+              <input id="rdbgRenewableContract_1" type="radio" value="false" checked="checked">
+              <label for="rdbgRenewableContract_1">No</label>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+
+  <!-- Configuración financiera - Garantías (requisitos) -->
+  <fieldset id="fdsWarrantiesSectionP2Gen">
+    <table class="Form">
+      <tbody>
+        <tr>
+          <td class="Label"><label>¿Solicitud de garantías?</label></td>
+          <td class="Field">
+            <div id="rdbgWarrantiesField">
+              <input id="rdbgWarrantiesField_0" type="radio" value="true" checked="checked">
+              <label for="rdbgWarrantiesField_0">Sí</label>
+              <input id="rdbgWarrantiesField_1" type="radio" value="false">
+              <label for="rdbgWarrantiesField_1">No</label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="Label"><label>Seriedad de la oferta</label></td>
+          <td class="Field">
+            <div id="rdbgSeriousnessField">
+              <input id="rdbgSeriousnessField_0" type="radio" value="true" checked="checked">
+              <label for="rdbgSeriousnessField_0">Sí</label>
+              <input id="rdbgSeriousnessField_1" type="radio" value="false">
+              <label for="rdbgSeriousnessField_1">No</label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td><span id="nbxSeriousnessPercentageField">10,00</span></td>
+        </tr>
+        <tr>
+          <td class="Label"><label>Cumplimiento</label></td>
+          <td class="Field">
+            <div id="rdbgComplianceField">
+              <input id="rdbgComplianceField_0" type="radio" value="true" checked="checked">
+              <label for="rdbgComplianceField_0">Sí</label>
+              <input id="rdbgComplianceField_1" type="radio" value="false">
+              <label for="rdbgComplianceField_1">No</label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="Label">
+            <input id="chkComplianceInvestmentCB" type="checkbox" checked="true">
+          </td>
+          <td class="Field"><label>Buen manejo y correcta inversión del anticipo</label></td>
+        </tr>
+        <tr>
+          <td><span id="nbxComplianceInvestPercentageField">100,00</span></td>
+          <td>
+            <div id="dtmbComplianceInvestStartDateBox" class="VortalDateBox">
+              <span id="dtmbComplianceInvestStartDateBox_txt">1/07/2025 12:00:00 PM <font class="DateTimeDetail">((UTC-05:00) Bogotá, Lima, Quito)</font></span>
+            </div>
+          </td>
+          <td>
+            <div id="dtmbComplianceInvestEndDateBox" class="VortalDateBox">
+              <span id="dtmbComplianceInvestEndDateBox_txt">31/12/2025 11:59:00 PM <font class="DateTimeDetail">((UTC-05:00) Bogotá, Lima, Quito)</font></span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="Label">
+            <input id="chkComplianceContractCB" type="checkbox" checked="true">
+          </td>
+          <td class="Field"><label>Cumplimiento del contrato</label></td>
+        </tr>
+        <tr>
+          <td><span id="nbxComplianceContractPercentageField">10,000000</span></td>
+          <td>
+            <div id="dtmbComplianceContractStartDateBox" class="VortalDateBox">
+              <span id="dtmbComplianceContractStartDateBox_txt">1/07/2025 12:00:00 PM <font class="DateTimeDetail">((UTC-05:00) Bogotá, Lima, Quito)</font></span>
+            </div>
+          </td>
+        </tr>
+
+        <!-- Fecha límite + fecha de entrega -->
+        <tr>
+          <td class="Label"><label>Fecha límite para entrega de garantías:</label></td>
+          <td class="NoWrapText">
+            <div id="dtmbDueDateToDeliverWarrantiesBox" class="VortalDateBox">
+              <span id="dtmbDueDateToDeliverWarrantiesBox_txt">25/06/2025 12:00:00 PM <font class="DateTimeDetail">((UTC-05:00) Bogotá, Lima, Quito)</font></span>
+            </div>
+          </td>
+          <td class="NoWrapText"><label>Fecha de entrega de garantías:</label></td>
+          <td>
+            <div id="dtmbWarrantiesDeliveryDateBox" class="VortalDateBox">
+              <span id="dtmbWarrantiesDeliveryDateBox_txt">20/11/2025 4:19:30 PM <font class="DateTimeDetail">((UTC-05:00) Bogotá, Lima, Quito)</font></span>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Garantías del proveedor (grid) -->
+    <label id="lblSupplierWarrantiesLabel" class="Bold">Garantías del proveedor:</label>
+    <div id="divSupplierWarrantiesListDiv">
+      <table id="grdSupplierWarrantiesList_tbl" class="VortalGrid">
+        <tbody>
+          <tr id="grdSupplierWarrantiesList_header">
+            <th> </th>
+            <th>Id de la garantía</th>
+            <th>Justificación</th>
+            <th>Tipo de garantía</th>
+            <th>Valor</th>
+            <th>Emisor</th>
+            <th>Fecha fin</th>
+            <th>Estado</th>
+            <th>Detalle</th>
+            <th>Acciones</th>
+          </tr>
+          <!-- Row 1: Borrador -->
+          <tr>
+            <td><input type="checkbox"></td>
+            <td>CO1.WRT.19648919</td>
+            <td>Cumplimiento - Buen manejo y correcta inversión del anticipo</td>
+            <td>-</td>
+            <td>0,00 COP</td>
+            <td></td>
+            <td></td>
+            <td>Borrador</td>
+            <td><a>Detalle</a></td>
+            <td><a>Editar</a></td>
+          </tr>
+          <!-- Row 2: Pendiente -->
+          <tr>
+            <td><input type="checkbox"></td>
+            <td>CO1.WRT.19642372</td>
+            <td>Cumplimiento - Buen manejo y correcta inversión del anticipo</td>
+            <td>Contrato de seguro</td>
+            <td>476.446.290,00 COP</td>
+            <td>ASEGURADORA SOLIDARIA</td>
+            <td>25/03/2027 <font class="DateTimeDetail">((UTC-05:00) Bogotá, Lima, Quito)</font></td>
+            <td>Pendiente</td>
+            <td><a>Detalle</a></td>
+            <td></td>
+          </tr>
+          <!-- Row 3: Aceptada -->
+          <tr>
+            <td><input type="checkbox"></td>
+            <td>CO1.WRT.18681864</td>
+            <td>Cumplimiento - Buen manejo y correcta inversión del anticipo</td>
+            <td>Contrato de seguro</td>
+            <td>476.747.350,00 COP</td>
+            <td>ASEGURADORA SOLIDARIA DE COLOMBIA</td>
+            <td>31/12/2026 <font class="DateTimeDetail">((UTC-05:00) Bogotá, Lima, Quito)</font></td>
+            <td>Aceptada</td>
+            <td><a>Detalle</a></td>
+            <td><a>Cancelar</a></td>
+          </tr>
+          <!-- Row 4: Vencida -->
+          <tr>
+            <td><input type="checkbox"></td>
+            <td>CO1.WRT.18665415</td>
+            <td>Seriedad de la oferta</td>
+            <td>-</td>
+            <td>95.349.470,00 COP</td>
+            <td>-</td>
+            <td>12/04/2026 11:00 PM <font class="DateTimeDetail">((UTC-05:00) Bogotá, Lima, Quito)</font></td>
+            <td>Vencida</td>
+            <td><a>Detalle</a></td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </fieldset>
+</div>

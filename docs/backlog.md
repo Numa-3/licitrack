@@ -1,7 +1,7 @@
 # LiciTrack — Backlog
 
 Fuente única de verdad para todo lo pendiente: mejoras a lo existente y features nuevas.
-Última actualización: 2026-04-11
+Última actualización: 2026-04-18
 
 ---
 
@@ -11,7 +11,10 @@ Ajustes y pulido sobre lo que ya está construido.
 
 ### Alta prioridad
 
-_(ninguna pendiente)_
+| # | Mejora | Módulo |
+|---|--------|--------|
+| 16 | Rediseñar calendario SECOP: 1 marcador por contrato por día, solo próximo deadline futuro, click abre cronograma completo, filtros por tipo de evento, cambios solo pasados/presentes (nunca futuro) | Calendario SECOP |
+| 17 | Worker: detectar sesión expirada ANTES de discovery (hoy pierde 1 ciclo cuando cookies caducan justo antes de scrape — página de 9807 bytes → 0 contracts → re-loguea al ciclo siguiente). Fix: hacer HEAD request liviano pre-scrape o refrescar cookies proactivamente | Worker SECOP |
 
 ### Media prioridad
 
@@ -43,6 +46,22 @@ _(ninguna pendiente)_
 Funcionalidades que no existen todavía.
 
 ### Alta prioridad
+
+#### Centro de monitoreo del sistema (`/admin/monitoreo`)
+- Dashboard interno que muestra estado en tiempo real de worker, cuentas SECOP, procesos monitoreados y servicios externos
+- **Qué mostraría**:
+  - Tarjeta 1 — **Worker SECOP**: estado del servicio NSSM (running/stopped), último ciclo, próximo ciclo, errores recientes del log, tiempo promedio por ciclo, créditos CapSolver
+  - Tarjeta 2 — **Cuentas SECOP**: semáforo por cuenta, última sync exitosa, sesiones activas/expiradas, botón "sincronizar ahora"
+  - Tarjeta 3 — **Procesos monitoreados**: total por tipo (contractual/precontractual), scrapes fallidos, snapshots viejos, cambios recientes
+  - Tarjeta 4 — **Servicios externos**: status + latencia de Supabase, OpenRouter, CapSolver, API SECOP II (datos.gov.co)
+  - **Timeline de errores**: últimos 50 errores/warnings unificados con filtros y stack trace
+- **Por qué**: hoy diagnosticar un fallo toma 1-2h de trabajo manual (entrar al servidor por AnyDesk, leer logs, chequear Vercel env vars, etc.). Con esto sería <5min. Origen real: sesión del 2026-04-19 donde debug del "Sin sesión" tomó horas
+- **Alertas (fase 2)**: worker sin heartbeat >10min, cuenta sin sincronizar >24h, CapSolver <100 créditos, webhook opcional a Telegram
+- **Consideraciones técnicas**:
+  - Empezar custom reutilizando `/api/debug/secop-status` como base; meter Sentry solo si aparecen errores frontend difíciles
+  - Worker hoy no expone HTTP — mejor opción: escribir heartbeat a nueva tabla `worker_heartbeat` cada X segundos (no requiere cambios de firewall)
+  - Nueva tabla `system_health_log` con eventos + timestamp, retención 30 días
+- **Relación**: complementa (no reemplaza) el Centro de Notificaciones In-App. Notificaciones = cambios en contratos/procesos/pólizas. Monitoreo = salud del sistema en sí
 
 #### Consola de administrador (`/admin`)
 - Hard delete global (reset completo con confirmación "CONFIRMAR")
@@ -80,11 +99,47 @@ Funcionalidades que no existen todavía.
 - Por qué: el equipo hoy entra manualmente a SECOP; centralizar la consulta ahorra tiempo y evita que se pierdan oportunidades o actualizaciones
 - Consideraciones técnicas: API pública en `https://www.datos.gov.co/resource/...` (SODA API); autenticación con app token; definir qué entidades/estados monitorear; posible webhook o polling periódico para detectar cambios
 
+#### Parser precontractual (procesos/licitaciones abiertas)
+- El worker actual solo sabe extraer datos de contratos **ya adjudicados** (las 9 pestañas: info, condiciones, bienes, docs, pagos, modificaciones, etc.)
+- Falta parser para la vista **precontractual** (licitación abierta, aún no adjudicada) — estructura HTML distinta, con cronograma de deadlines (cierre de presentación, adendas, observaciones)
+- **Lo más crítico**: cronograma con fechas clave que hoy se pueden pasar por alto porque el tracker no los ve
+- Permitir al usuario pegar link directo a un proceso no adjudicado para empezar a trackear desde etapas tempranas
+- Consideraciones técnicas: detectar tipo de URL (contractDetail vs processNotice) para elegir parser correcto; `secop_processes` ya tiene el campo `source` pero falta lógica para estado "precontractual" vs "contractual"
+- Nomenclatura propuesta: pre-adjudicación = "Proceso" / post-adjudicación = "Contrato" (validar con usuario)
+
+#### Integración calendario SECOP ↔ ítems a comprar
+- Cruzar deadlines de contratos SECOP con `items.due_date` del módulo de compras para alertas combinadas
+- Alertas cruzadas: "Faltan 3 días para deadline del Contrato X — tienes 2 ítems sin proveedor asignado"
+- Due dates de ítems visibles en el mismo calendario (con color distinto del deadline del contrato)
+- Vista del día: al hacer click en fecha con deadline de contrato, mostrar resumen "contrato X tiene N ítems pendientes de compra"
+- Por qué: el calendario SECOP solo sirve si cruza con operaciones reales (compras). Hoy son dos silos separados
+- Requiere: feature "Unificar contratos SECOP con módulo de ítems/compras" implementada primero
+
+#### Unificar contratos SECOP con módulo de ítems/compras
+- Al asignar contrato + entidad a un ítem de compra, usar los datos ya capturados por el SECOP tracker en vez de crear contratos manualmente
+- Hoy existen **dos fuentes separadas**: tabla `contracts` (manual, el equipo escribe nombre y entidad) y tabla `secop_processes` (SECOP tracker extrae objeto, entidad, fechas, valor, estado automáticamente)
+- Problema: duplicación de trabajo — se re-escribe a mano lo que el worker ya sabe
+- Solución propuesta: permitir que un ítem se vincule directamente a un `secop_process_id`, o unificar ambas tablas con un tipo/source (`manual` vs `secop`)
+- Al crear un ítem, selector de contratos que liste los monitoreados en SECOP; autocompleta entidad, objeto, fechas
+- Consideraciones técnicas: decidir si migrar `contracts` para soportar link a `secop_processes`, o crear vista unificada; revisar FK de `items.contract_id` e impacto en wizard de importación, facturas y reportes
+- Por qué es alta prioridad: el equipo ya está cargando todos los logins y contratos de SECOP — sería el momento ideal para aprovechar esa data en el módulo de compras
+
 #### Importación masiva de proveedores desde Excel
 - Subir `.xlsx` → mapeo de columnas → clasificación con IA en batch
 - Vista previa con detección de duplicados
 - Bulk insert con resumen final
 - Requiere migración: agregar `contact_name` y `address` a tabla `suppliers`
+
+#### Centro de Notificaciones In-App (`/notificaciones`)
+- Dashboard unificado que centraliza alertas de las dos funciones principales de LiciTrack
+- **Layout**: dos cajitas de resumen arriba (una por categoría, cada una con su color) + feed cronológico grande abajo
+- **Categoría A — Procesos SECOP** (color propio): deadlines de cronograma ("en 2 días vence plazo para observar"), cambios de estado (adjudicación → adjudicado → finalizado), cualquier modificación detectada
+- **Categoría B — Ítems y Proveedores** (color propio): recordatorios de estado estancado ("ítems llevan 2 días en 'enviado'"), cambios de estado de ítems, acceso rápido a WhatsApp del proveedor
+- **Interacción**: click en cajita de arriba → filtra el feed a solo esa categoría; cada notificación tiene el color de su categoría
+- **Feed**: scroll vertical, orden cronológico (más reciente arriba), todas las notificaciones mezcladas con color para distinguir
+- Por qué: las notificaciones de Telegram ya existen pero falta un centro visual dentro de la app que consolide todo de un vistazo
+- Requiere: tabla `notifications` (o extender la existente si se crea en Fase 1); integración con worker SECOP y lógica de trackeo de ítems
+- Relacionado con: "Header fijo + sistema de notificaciones" y "Fase 1 SECOP" — este dashboard es la implementación concreta del centro de notificaciones
 
 #### Fase 1: Dashboard de Seguimiento + Centro de Notificaciones (`/secop/seguimiento`)
 - KPIs arriba: contratos monitoreados, alertas urgentes, cambios hoy, próximo deadline

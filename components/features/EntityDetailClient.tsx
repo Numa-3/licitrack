@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import DeleteButton from '@/components/ui/DeleteButton'
+import { formatDate } from '@/lib/utils/format'
 
 // ── Types ──────────────────────────────────────────────────────
 type EntityDoc = {
@@ -65,11 +66,6 @@ const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-50 text-green-700',
   completed: 'bg-blue-50 text-blue-700',
   cancelled: 'bg-red-50 text-red-700',
-}
-
-// ── Helpers ────────────────────────────────────────────────────
-function formatDate(d: string): string {
-  return new Date(d).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
 // ── Component ──────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import DeleteButton from '@/components/ui/DeleteButton'
+import { formatDate } from '@/lib/utils/format'
 
 // ── Types ──────────────────────────────────────────────────────
 type ShipmentItem = {
@@ -54,10 +55,6 @@ function getShipmentStatus(s: Shipment): { label: string; color: string } {
   const today = new Date().toISOString().split('T')[0]
   if (s.estimated_arrival < today) return { label: 'Retrasado', color: 'bg-red-50 text-red-600 font-semibold' }
   return { label: 'En camino', color: 'bg-blue-50 text-blue-700' }
-}
-
-function formatDate(d: string): string {
-  return new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
 // ── Component ──────────────────────────────────────────────────

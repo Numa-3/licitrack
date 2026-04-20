@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { formatCurrency } from '@/lib/utils/format'
+import { formatCurrency, formatDate } from '@/lib/utils/format'
 import {
   Search, ExternalLink, Eye, Star, X, Plus,
   ChevronLeft, ChevronRight, ToggleLeft, ToggleRight,
@@ -822,13 +822,3 @@ function NewRuleForm({
   )
 }
 
-// ── Helpers ─────────────────────────────────────────────────
-
-function formatDate(date: string | null): string {
-  if (!date) return '—'
-  return new Date(date).toLocaleDateString('es-CO', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  })
-}

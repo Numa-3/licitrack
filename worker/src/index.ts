@@ -5,6 +5,7 @@ import { loginAccount } from './login.js'
 import { getValidSession } from './session.js'
 import { discoverProcesses } from './discovery.js'
 import { runMonitorCycle } from './monitor.js'
+import { runPrecontractualMonitorCycle, monitorOneNow } from './precontractual/monitor.js'
 
 /**
  * Main entry point for the SECOP worker.
@@ -61,6 +62,12 @@ async function main() {
           await processPendingSyncs()
         } catch (err) {
           console.error('[Worker] Sync check failed:', err instanceof Error ? err.message : err)
+        }
+        try {
+          await bootstrapNewPrecontractual()
+        } catch (err) {
+          console.error('[Worker] Precontractual bootstrap check failed:',
+            err instanceof Error ? err.message : err)
         }
       }
     }
@@ -150,10 +157,19 @@ async function runFullCycle() {
     }
   }
 
-  // 3. Monitor all enabled processes
-  console.log('\n--- Monitoring ---')
-  const result = await runMonitorCycle()
-  console.log(`[Worker] Cycle complete: ${result.checked} checked, ${result.changes} changes`)
+  // 3. Monitor contractual (post-award) processes
+  console.log('\n--- Monitoring (contractual) ---')
+  const contractualResult = await runMonitorCycle()
+  console.log(`[Worker] Contractual: ${contractualResult.checked} checked, ${contractualResult.changes} changes`)
+
+  // 4. Monitor precontractual processes via public API (no login, no captcha)
+  console.log('\n--- Monitoring (precontractual) ---')
+  try {
+    const precontractualResult = await runPrecontractualMonitorCycle()
+    console.log(`[Worker] Precontractual: ${precontractualResult.checked} checked, ${precontractualResult.changes} changes`)
+  } catch (err) {
+    console.error('[Worker] Precontractual cycle failed:', err instanceof Error ? err.message : err)
+  }
 }
 
 /**
@@ -205,6 +221,36 @@ async function processPendingSyncs() {
 
     await admin.from('secop_accounts').update({ sync_requested_at: null }).eq('id', acc.id)
     console.log(`[Sync] ${acc.name}: done`)
+  }
+}
+
+/**
+ * Detect precontractual processes that were just added (monitoring_enabled=true,
+ * tipo_proceso='precontractual', no snapshot yet) and bootstrap them — this
+ * triggers the first captcha-protected scrape so the user sees the cronograma
+ * with exact hours within ~30 seconds instead of waiting for the next 2h cycle.
+ */
+async function bootstrapNewPrecontractual() {
+  const { data: candidates } = await admin
+    .from('secop_processes')
+    .select('id, notice_uid')
+    .eq('monitoring_enabled', true)
+    .eq('tipo_proceso', 'precontractual')
+    .is('last_monitored_at', null)
+    .not('notice_uid', 'is', null)
+    .limit(3) // cap per cycle to avoid hammering the captcha solver
+
+  if (!candidates?.length) return
+
+  for (const cand of candidates) {
+    if (!cand.notice_uid) continue
+    console.log(`[Bootstrap] ${cand.notice_uid}: first-time capture`)
+    const res = await monitorOneNow(cand.id)
+    if ('error' in res) {
+      console.error(`[Bootstrap] ${cand.notice_uid} failed:`, res.error)
+    } else {
+      console.log(`[Bootstrap] ${cand.notice_uid}: done (${res.changesFound} changes)`)
+    }
   }
 }
 

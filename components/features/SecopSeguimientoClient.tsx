@@ -53,7 +53,8 @@ export default function SecopSeguimientoClient({
 
   const showToast = (message: string, type: 'error' | 'success' = 'error') => {
     setToast({ message, type })
-    setTimeout(() => setToast(null), 4000)
+    // Errors stay longer so the user can read the backend detail
+    setTimeout(() => setToast(null), type === 'error' ? 10_000 : 4000)
   }
 
   // ── Fetch ──────────────────────────────────────────────────
@@ -72,6 +73,16 @@ export default function SecopSeguimientoClient({
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // Re-pull cuenta(s) después de que el worker sincroniza: trae
+  // cookies_expire_at / discovered_entities / process_count frescos para
+  // que el UI refleje "Sesión activa", entidades descubiertas, etc.
+  const refreshAccounts = useCallback(async () => {
+    const res = await fetch('/api/secop/accounts').catch(() => null)
+    if (!res?.ok) return
+    const fresh = await res.json() as Account[]
+    setAccounts(fresh)
   }, [])
 
   const handleTabChange = (tab: Tab) => {
@@ -93,7 +104,16 @@ export default function SecopSeguimientoClient({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, username, password }),
     })
-    if (!res.ok) { showToast('Error al crear cuenta'); return }
+    if (!res.ok) {
+      let msg = `Error al crear cuenta (HTTP ${res.status})`
+      try {
+        const body = await res.json()
+        if (body?.error) msg = `Error al crear cuenta: ${body.error}`
+      } catch { /* body no era JSON */ }
+      console.error('[createAccount]', msg)
+      showToast(msg)
+      return
+    }
     const newAcc = await res.json()
     setAccounts(prev => [{ ...newAcc, process_count: 0, is_active: true, last_login_at: null, last_sync_at: null, cookies_expire_at: null, discovered_entities: null, monitored_entities: null, entity_name: null, sync_requested_at: null }, ...prev])
     showToast('Cuenta creada', 'success')
@@ -148,8 +168,11 @@ export default function SecopSeguimientoClient({
     showToast('Cuenta eliminada', 'success')
   }
 
-  const addManualProcess = async (input: string) => {
-    const res = await fetch('/api/secop/processes/manual', {
+  const addManualProcess = async (input: string, tipo: 'precontractual' | 'contractual') => {
+    const url = tipo === 'precontractual'
+      ? '/api/secop/processes/precontractual'
+      : '/api/secop/processes/manual'
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ input }),
@@ -175,7 +198,7 @@ export default function SecopSeguimientoClient({
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
       {/* Toast */}
       {toast && (
-        <div className={`fixed top-4 right-4 z-[60] px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium transition-all ${
+        <div className={`fixed top-4 right-4 z-[60] px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium transition-all max-w-md whitespace-normal break-words ${
           toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-gray-900 text-white'
         }`}>
           {toast.message}
@@ -259,6 +282,7 @@ export default function SecopSeguimientoClient({
           onCreate={createAccount}
           onUpdateEntities={updateMonitoredEntities}
           onRequestSync={requestSync}
+          onRefreshAccounts={refreshAccounts}
           onRefreshProcesses={() => fetchProcesses(activeTab === 'changes' ? 'all' : activeTab, page * PAGE_SIZE)}
         />
       )}
@@ -511,10 +535,11 @@ function EmptyState({ hasAccounts, onShowAccounts }: { hasAccounts: boolean; onS
 }
 
 function AddProcessModal({ onAdd, onClose }: {
-  onAdd: (input: string) => Promise<{ message?: string; error?: string }>
+  onAdd: (input: string, tipo: 'precontractual' | 'contractual') => Promise<{ message?: string; error?: string }>
   onClose: () => void
 }) {
   const [input, setInput] = useState('')
+  const [tipo, setTipo] = useState<'precontractual' | 'contractual'>('precontractual')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{ message?: string; error?: string } | null>(null)
 
@@ -523,11 +548,13 @@ function AddProcessModal({ onAdd, onClose }: {
     if (!input.trim()) return
     setLoading(true)
     setResult(null)
-    const res = await onAdd(input.trim())
+    const res = await onAdd(input.trim(), tipo)
     setResult(res)
     setLoading(false)
     if (!res.error) setTimeout(onClose, 1500)
   }
+
+  const isPrecontractual = tipo === 'precontractual'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
@@ -539,11 +566,42 @@ function AddProcessModal({ onAdd, onClose }: {
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">URL de SECOP, NTC ID o referencia del proceso</label>
+            <label className="block text-xs font-medium text-gray-600 mb-2">Tipo de proceso</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setTipo('precontractual')}
+                className={`px-3 py-2 text-sm rounded-md border text-left ${
+                  tipo === 'precontractual'
+                    ? 'bg-gray-900 text-white border-gray-900'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}>
+                <div className="font-medium">Precontractual</div>
+                <div className="text-[10px] opacity-75 mt-0.5">Proceso público, sin adjudicar</div>
+              </button>
+              <button type="button" onClick={() => setTipo('contractual')}
+                className={`px-3 py-2 text-sm rounded-md border text-left ${
+                  tipo === 'contractual'
+                    ? 'bg-gray-900 text-white border-gray-900'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}>
+                <div className="font-medium">En ejecución</div>
+                <div className="text-[10px] opacity-75 mt-0.5">Contrato ya adjudicado</div>
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              {isPrecontractual ? 'Link público del proceso (OpportunityDetail)' : 'URL de SECOP, NTC ID o referencia del proceso'}
+            </label>
             <input type="text" value={input} onChange={e => setInput(e.target.value)}
-              placeholder="https://community.secop.gov.co/... o CO1.NTC.5398889"
+              placeholder={isPrecontractual
+                ? 'https://community.secop.gov.co/Public/Tendering/OpportunityDetail/Index?noticeUID=CO1.NTC.xxxxxxx'
+                : 'https://community.secop.gov.co/... o CO1.NTC.5398889'}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
-            <p className="text-[10px] text-gray-400 mt-1">Se busca primero en la API publica de SECOP. Si no se encuentra, se crea un registro minimo.</p>
+            <p className="text-[10px] text-gray-400 mt-1">
+              {isPrecontractual
+                ? 'Usa la API pública SECOP II (sin login). Trackea cronograma, estado, fase y adjudicación.'
+                : 'Se busca primero en la API pública. Requiere cuenta SECOP configurada para monitorear las 6 pestañas.'}
+            </p>
           </div>
           {result && (
             <div className={`p-3 rounded-lg text-sm ${result.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>

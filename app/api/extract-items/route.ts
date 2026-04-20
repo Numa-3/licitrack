@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { requireAuth } from '@/lib/admin'
 
 /**
  * Two-step AI extraction:
@@ -6,6 +7,9 @@ import { NextRequest } from 'next/server'
  * 2. Code parses numbers deterministically (no AI number conversion)
  */
 export async function POST(request: NextRequest) {
+  const auth = await requireAuth()
+  if ('error' in auth) return auth.error
+
   try {
     const { rows, categories, contractType } = await request.json() as {
       rows: unknown[][]

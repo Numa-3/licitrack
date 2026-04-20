@@ -1,6 +1,10 @@
 import { NextRequest } from 'next/server'
+import { requireAuth } from '@/lib/admin'
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAuth()
+  if ('error' in auth) return auth.error
+
   try {
     const { descriptions, categories } = await request.json()
 

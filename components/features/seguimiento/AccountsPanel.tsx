@@ -6,17 +6,25 @@ import { formatCurrency } from '@/lib/utils/format'
 import type { Account, AccountProcess } from './types'
 import { timeAgo, estadoStyle } from './helpers'
 
-export default function AccountsPanel({ accounts, onToggle, onDelete, onCreate, onUpdateEntities, onRequestSync, onRefreshProcesses }: {
+export default function AccountsPanel({ accounts, onToggle, onDelete, onCreate, onUpdateEntities, onRequestSync, onRefreshAccounts, onRefreshProcesses }: {
   accounts: Account[]
   onToggle: (id: string, active: boolean) => void
   onDelete: (id: string) => void
   onCreate: (name: string, username: string, password: string) => void
   onUpdateEntities: (id: string, monitored: string[]) => void
   onRequestSync: (id: string) => Promise<void>
+  onRefreshAccounts: () => Promise<void>
   onRefreshProcesses: () => void
 }) {
   const [showNew, setShowNew] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  // Pull estado fresco cuando el panel se abre: cubre el caso en que el worker
+  // sincronizó mientras el usuario no estaba mirando este panel.
+  useEffect(() => {
+    onRefreshAccounts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="mb-6 bg-white rounded-xl border border-[#EAEAEA] p-4" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
@@ -44,6 +52,7 @@ export default function AccountsPanel({ accounts, onToggle, onDelete, onCreate, 
               onDelete={onDelete}
               onUpdateEntities={onUpdateEntities}
               onRequestSync={onRequestSync}
+              onRefreshAccounts={onRefreshAccounts}
               onRefreshProcesses={onRefreshProcesses}
             />
           ))}
@@ -53,7 +62,7 @@ export default function AccountsPanel({ accounts, onToggle, onDelete, onCreate, 
   )
 }
 
-function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEntities, onRequestSync, onRefreshProcesses }: {
+function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEntities, onRequestSync, onRefreshAccounts, onRefreshProcesses }: {
   acc: Account
   isExpanded: boolean
   onExpand: () => void
@@ -61,6 +70,7 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEnt
   onDelete: (id: string) => void
   onUpdateEntities: (id: string, monitored: string[]) => void
   onRequestSync: (id: string) => Promise<void>
+  onRefreshAccounts: () => Promise<void>
   onRefreshProcesses: () => void
 }) {
   const discovered = acc.discovered_entities || []
@@ -96,12 +106,15 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEnt
         setSyncing(false)
         setSyncDone(true)
         setContractsKey(k => k + 1)
+        // Re-fetch cuentas en el padre para propagar cookies_expire_at,
+        // discovered_entities, process_count frescos al resto del UI.
+        await onRefreshAccounts()
         onRefreshProcesses()
         setTimeout(() => setSyncDone(false), 5000)
       }
     }, 5000)
     return () => clearInterval(interval)
-  }, [syncing, acc.id, onRefreshProcesses])
+  }, [syncing, acc.id, onRefreshAccounts, onRefreshProcesses])
 
   return (
     <div className={`rounded-lg border ${acc.is_active ? 'border-[#EAEAEA] bg-white' : 'border-gray-100 bg-gray-50'}`}>
@@ -184,12 +197,21 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEnt
           <div className="flex items-center gap-3 mb-4">
             <button
               onClick={handleSaveAndDiscover}
-              disabled={saving || syncing || pending.length === 0}
+              disabled={saving || syncing || (discovered.length > 0 && pending.length === 0)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-gray-900 hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-md shadow-sm"
             >
               {saving ? <Loader2 size={13} className="animate-spin" /> : <Star size={13} />}
-              {isDirty ? 'Guardar y descubrir' : 'Descubrir procesos'}
+              {isDirty
+                ? 'Guardar y descubrir'
+                : discovered.length === 0
+                  ? 'Descubrir entidades'
+                  : 'Descubrir procesos'}
             </button>
+            {discovered.length === 0 && !syncing && (
+              <span className="text-xs text-gray-500">
+                Primer sync: inicia sesión y descubre las entidades disponibles
+              </span>
+            )}
             {syncing && (
               <span className="inline-flex items-center gap-1.5 text-xs text-blue-600">
                 <Loader2 size={12} className="animate-spin" /> Descubriendo...

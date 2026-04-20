@@ -6,13 +6,10 @@ import { loginAccount } from './login.js'
 import {
   parseInfoGeneral,
   parseCondiciones,
-  parseBienesServicios,
   parseDocsProveedor,
   parseDocsContrato,
-  parsePresupuestal,
   parseEjecucion,
   parseModificaciones,
-  parseIncumplimientos,
 } from './parsers/contract-detail.js'
 import {
   hashSnapshot,
@@ -29,18 +26,16 @@ type MonitoredProcess = {
   entity_name: string | null
 }
 
-// SECOP uses 10 stepDivs: stepDiv_1 is "Modificación pendiente" (skip),
-// actual content tabs are stepDiv_2 through stepDiv_10.
+// Only the tabs the user cares about. Tabs 3 (Bienes), 6 (Presupuestal) and
+// 9 (Incumplimientos) are intentionally skipped — scraping them wastes ~30%
+// of cycle time.
 const TABS = [
-  { num: 1, slug: 'info-general',     parser: 'info_general' },
-  { num: 2, slug: 'condiciones',       parser: 'condiciones' },
-  { num: 3, slug: 'bienes-servicios',  parser: 'bienes_servicios' },
-  { num: 4, slug: 'docs-proveedor',    parser: 'docs_proveedor' },
-  { num: 5, slug: 'docs-contrato',     parser: 'docs_contrato' },
-  { num: 6, slug: 'presupuestal',      parser: 'presupuestal' },
-  { num: 7, slug: 'ejecucion',         parser: 'ejecucion' },
-  { num: 8, slug: 'modificaciones',    parser: 'modificaciones' },
-  { num: 9, slug: 'incumplimientos',   parser: 'incumplimientos' },
+  { num: 1, slug: 'info-general',  parser: 'info_general' },
+  { num: 2, slug: 'condiciones',   parser: 'condiciones' },
+  { num: 4, slug: 'docs-proveedor', parser: 'docs_proveedor' },
+  { num: 5, slug: 'docs-contrato',  parser: 'docs_contrato' },
+  { num: 7, slug: 'ejecucion',     parser: 'ejecucion' },
+  { num: 8, slug: 'modificaciones', parser: 'modificaciones' },
 ] as const
 
 /**
@@ -68,10 +63,14 @@ export async function runMonitorCycle(): Promise<{
   let totalChanges = 0
 
   try {
+    // Contractual monitor only picks up post-award contracts. Precontractual
+    // processes (tipo_proceso='precontractual') are handled by a separate
+    // cycle that uses the public SECOP II API instead of Playwright+login.
     const { data: processes } = await admin
       .from('secop_processes')
       .select('id, secop_process_id, url_publica, account_id, entity_name')
       .eq('monitoring_enabled', true)
+      .or('tipo_proceso.is.null,tipo_proceso.eq.contractual')
 
     if (!processes?.length) {
       console.log('[Monitor] No monitored processes found')
@@ -333,27 +332,23 @@ async function monitorProcess(
       : emptyInfoGeneral(),
     condiciones: tabHtmls.has('condiciones')
       ? parseCondiciones(tabHtmls.get('condiciones')!)
-      : { renovable: null, fecha_renovacion: null, metodo_pago: null, plazo_pago: null, opciones_entrega: null },
-    bienes_servicios: tabHtmls.has('bienes_servicios')
-      ? parseBienesServicios(tabHtmls.get('bienes_servicios')!)
-      : { item_count: 0 },
+      : {
+          renovable: null, fecha_renovacion: null, metodo_pago: null,
+          plazo_pago: null, opciones_entrega: null,
+          fecha_limite_garantias: null, fecha_entrega_garantias: null,
+          requisitos_garantias: null, garantias: [],
+        },
     docs_proveedor: tabHtmls.has('docs_proveedor')
       ? parseDocsProveedor(tabHtmls.get('docs_proveedor')!)
       : { document_names: [] },
     docs_contrato: tabHtmls.has('docs_contrato')
       ? parseDocsContrato(tabHtmls.get('docs_contrato')!)
       : { documents: [] },
-    presupuestal: tabHtmls.has('presupuestal')
-      ? parsePresupuestal(tabHtmls.get('presupuestal')!)
-      : { cdp_balance: null, vigencia_futura_balance: null, budget_origin_total: null },
     ejecucion: tabHtmls.has('ejecucion')
       ? parseEjecucion(tabHtmls.get('ejecucion')!)
       : { pagos: [], execution_docs: [] },
     modificaciones: tabHtmls.has('modificaciones')
       ? parseModificaciones(tabHtmls.get('modificaciones')!)
-      : { entries: [] },
-    incumplimientos: tabHtmls.has('incumplimientos')
-      ? parseIncumplimientos(tabHtmls.get('incumplimientos')!)
       : { entries: [] },
     scraped_at: new Date().toISOString(),
   }

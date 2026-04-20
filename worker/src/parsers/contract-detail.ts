@@ -1,17 +1,16 @@
 import * as cheerio from 'cheerio'
+import type { AnyNode } from 'domhandler'
 import type {
   InfoGeneral,
   Condiciones,
-  BienesServicios,
+  GarantiaEntry,
+  GarantiaRequisitos,
   DocProveedor,
   DocContrato,
-  Presupuestal,
   Ejecucion,
   PagoEntry,
   Modificaciones,
   ModificacionEntry,
-  Incumplimientos,
-  IncumplimientoEntry,
 } from '../diff.js'
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -21,13 +20,7 @@ function text($: cheerio.CheerioAPI, selector: string): string | null {
   return t || null
 }
 
-function inputVal($: cheerio.CheerioAPI, selector: string): string | null {
-  const v = $(selector).first().val()
-  const s = typeof v === 'string' ? v.trim() : null
-  return s || null
-}
-
-// ── Tab 2 (stepDiv_2): Información general ──────────────────
+// ── Tab 1 (stepDiv_2): Información general ──────────────────
 
 export function parseInfoGeneral(html: string): InfoGeneral {
   const $ = cheerio.load(html)
@@ -49,33 +42,159 @@ export function parseInfoGeneral(html: string): InfoGeneral {
   }
 }
 
-// ── Tab 3 (stepDiv_3): Condiciones ──────────────────────────
+// ── Tab 2 (stepDiv_2): Condiciones + Garantías ──────────────
 
 export function parseCondiciones(html: string): Condiciones {
   const $ = cheerio.load(html)
 
   return {
-    renovable: text($, '#selBreakableContract') || text($, '#rdbgBreakableContractValue input:checked + label'),
+    renovable: text($, '#selBreakableContract')
+      || text($, '#rdbgRenewableContract input:checked ~ label')
+      || text($, '#rdbgBreakableContractValue input:checked + label'),
     fecha_renovacion: text($, '#dtmbContractBreakingDate_txt') || text($, '#dtmbContractRenewalDate_txt'),
     metodo_pago: text($, '#selPaymentMethod'),
     plazo_pago: text($, '#selPaymentTerm'),
     opciones_entrega: text($, '#selIncoterm'),
+    fecha_limite_garantias: extractDateText($, '#dtmbDueDateToDeliverWarrantiesBox_txt'),
+    fecha_entrega_garantias: extractDateText($, '#dtmbWarrantiesDeliveryDateBox_txt'),
+    requisitos_garantias: parseRequisitosGarantias($),
+    garantias: parseGarantias($),
   }
 }
 
-// ── Tab 4 (stepDiv_4): Bienes y servicios ───────────────────
-
-export function parseBienesServicios(html: string): BienesServicios {
-  const $ = cheerio.load(html)
-  // Count catalogue item rows — each has id like "incCatalogueItems..."
-  const items = $('[id*="incCatalogueItems"]').filter((_, el) => {
-    const id = $(el).attr('id') || ''
-    return id.includes('questionDescription')
-  })
-  return { item_count: items.length }
+/**
+ * Extract a date value from SECOP's VortalDateBox span.
+ * These spans contain the date plus a timezone suffix in a nested <font class="DateTimeDetail">.
+ * Example: "25/06/2025 12:00:00 PM <font>((UTC-05:00) Bogotá, Lima, Quito)</font>"
+ * We want just "25/06/2025 12:00:00 PM".
+ */
+function extractDateText($: cheerio.CheerioAPI, selector: string): string | null {
+  const el = $(selector).first()
+  if (el.length === 0) return null
+  // Get text, remove nested font.DateTimeDetail content (timezone label)
+  const clone = el.clone()
+  clone.find('font.DateTimeDetail, .DateTimeDetail').remove()
+  const v = clone.text().trim()
+  return v || null
 }
 
-// ── Tab 5 (stepDiv_5): Documentos del proveedor ─────────────
+/**
+ * Extract garantía requirements from "Configuración financiera - Garantías".
+ * Returns null if the section is absent (some contracts don't require warranties).
+ */
+function parseRequisitosGarantias($: cheerio.CheerioAPI): GarantiaRequisitos | null {
+  // Section is absent → no requirements to parse
+  if ($('#fdsWarrantiesSectionP2Gen').length === 0) return null
+
+  const radioCheckedLabel = (groupId: string): string | null => {
+    const checked = $(`#${groupId} input:checked`).first()
+    if (checked.length === 0) return null
+    const forId = checked.attr('id')
+    const label = forId ? $(`label[for="${forId}"]`).first().text().trim() : null
+    return label || null
+  }
+
+  const isChecked = (id: string): boolean => {
+    const el = $(`#${id}`).first()
+    if (el.length === 0) return false
+    return (el.attr('checked') === 'true' || el.attr('checked') === 'checked')
+  }
+
+  return {
+    solicita_garantias: radioCheckedLabel('rdbgWarrantiesField'),
+    seriedad_oferta: radioCheckedLabel('rdbgSeriousnessField'),
+    seriedad_porcentaje: text($, '#nbxSeriousnessPercentageField'),
+    cumplimiento: radioCheckedLabel('rdbgComplianceField'),
+    cumplimiento_porcentaje: text($, '#nbxComplianceContractPercentageField'),
+    anticipo_activo: isChecked('chkComplianceInvestmentCB'),
+    anticipo_porcentaje: text($, '#nbxComplianceInvestPercentageField'),
+    anticipo_vigencia_desde: extractDateText($, '#dtmbComplianceInvestStartDateBox_txt'),
+    anticipo_vigencia_hasta: extractDateText($, '#dtmbComplianceInvestEndDateBox_txt'),
+    cumplimiento_contrato_activo: isChecked('chkComplianceContractCB'),
+    cumplimiento_contrato_vigencia_desde: extractDateText($, '#dtmbComplianceContractStartDateBox_txt'),
+  }
+}
+
+/**
+ * Parse the "Garantías del proveedor" grid.
+ *
+ * SECOP's grid has a stable structure:
+ *   <table id="grdSupplierWarrantiesList_tbl">
+ *     <tr id="grdSupplierWarrantiesList_header"> ...headers... </tr>
+ *     <tr> [checkbox] | Id (CO1.WRT.xxx) | Justificación | Tipo | Valor | Emisor | Fecha fin | Estado | ... </tr>
+ *
+ * We use the grid id as the primary selector; as a safety net, we fall back
+ * to any row whose first/second cell matches the warranty id pattern.
+ */
+function parseGarantias($: cheerio.CheerioAPI): GarantiaEntry[] {
+  const entries: GarantiaEntry[] = []
+  const seen = new Set<string>()
+
+  const collectFrom = (rowSelector: string) => {
+    $(rowSelector).each((_, row) => {
+      const $row = $(row)
+      // Skip header row
+      if ($row.attr('id')?.endsWith('_header')) return
+      const entry = tryParseWarrantyRow($, $row)
+      if (entry && !seen.has(entry.garantia_id)) {
+        seen.add(entry.garantia_id)
+        entries.push(entry)
+      }
+    })
+  }
+
+  // Strategy 1: exact grid id confirmed from SECOP HTML sample
+  collectFrom('#grdSupplierWarrantiesList_tbl tr')
+
+  // Strategy 2 (fallback): any row whose cells contain CO1.WRT.xxx
+  if (entries.length === 0) {
+    collectFrom('tr')
+  }
+
+  return entries
+}
+
+function tryParseWarrantyRow($: cheerio.CheerioAPI, $row: cheerio.Cheerio<AnyNode>): GarantiaEntry | null {
+  const cells = $row.find('td')
+  // Need at least: checkbox + 7 data columns (Id, Justificación, Tipo, Valor, Emisor, Fecha fin, Estado) = 8
+  if (cells.length < 8) return null
+
+  // Find the cell that contains the warranty id (CO1.WRT.xxxxxxxx)
+  let idCellIndex = -1
+  let warrantyId: string | null = null
+  for (let i = 0; i < cells.length; i++) {
+    const cellText = $(cells[i]).text().trim()
+    const match = cellText.match(/CO1\.WRT\.\d+/i)
+    if (match) {
+      warrantyId = match[0]
+      idCellIndex = i
+      break
+    }
+  }
+  if (!warrantyId || idCellIndex === -1) return null
+
+  const getCell = (offset: number): string | null => {
+    const idx = idCellIndex + offset
+    if (idx < 0 || idx >= cells.length) return null
+    // Strip timezone suffixes like "(UTC-05:00) Bogotá..."
+    const clone = $(cells[idx]).clone()
+    clone.find('font.DateTimeDetail, .DateTimeDetail').remove()
+    const v = clone.text().replace(/\s+/g, ' ').trim()
+    return v || null
+  }
+
+  return {
+    garantia_id: warrantyId,
+    justificacion: getCell(1),
+    tipo: getCell(2),
+    valor: getCell(3),
+    emisor: getCell(4),
+    fecha_fin: getCell(5),
+    estado: getCell(6),
+  }
+}
+
+// ── Tab 4 (stepDiv_5): Documentos del proveedor ─────────────
 
 export function parseDocsProveedor(html: string): DocProveedor {
   const $ = cheerio.load(html)
@@ -88,7 +207,7 @@ export function parseDocsProveedor(html: string): DocProveedor {
   return { document_names: names }
 }
 
-// ── Tab 6 (stepDiv_6): Documentos del contrato ──────────────
+// ── Tab 5 (stepDiv_6): Documentos del contrato ──────────────
 
 export function parseDocsContrato(html: string): DocContrato {
   const $ = cheerio.load(html)
@@ -105,19 +224,7 @@ export function parseDocsContrato(html: string): DocContrato {
   return { documents }
 }
 
-// ── Tab 7 (stepDiv_7): Información presupuestal ─────────────
-
-export function parsePresupuestal(html: string): Presupuestal {
-  const $ = cheerio.load(html)
-
-  return {
-    cdp_balance: text($, '#cbxCDPBalanceTextbox'),
-    vigencia_futura_balance: text($, '#cbxVigenciaFuturaBalanceTextbox'),
-    budget_origin_total: text($, '#cbxBudgetOriginTotalValue'),
-  }
-}
-
-// ── Tab 8 (stepDiv_8): Ejecución del contrato ───────────────
+// ── Tab 7 (stepDiv_8): Ejecución del contrato ───────────────
 
 export function parseEjecucion(html: string): Ejecucion {
   const $ = cheerio.load(html)
@@ -146,7 +253,7 @@ export function parseEjecucion(html: string): Ejecucion {
   return { pagos, execution_docs }
 }
 
-// ── Tab 9 (stepDiv_9): Modificaciones del contrato ──────────
+// ── Tab 8 (stepDiv_9): Modificaciones del contrato ──────────
 
 export function parseModificaciones(html: string): Modificaciones {
   const $ = cheerio.load(html)
@@ -163,46 +270,6 @@ export function parseModificaciones(html: string): Modificaciones {
       fecha_aprobacion: text($, `#dtmbModificationApprovalDateValue_${i}_txt`),
       version: text($, `#spnModificationVersionValue_${i}`),
     })
-  }
-
-  return { entries }
-}
-
-// ── Tab 10 (stepDiv_10): Incumplimientos ────────────────────
-
-export function parseIncumplimientos(html: string): Incumplimientos {
-  const $ = cheerio.load(html)
-  const entries: IncumplimientoEntry[] = []
-
-  // grdNonCompliancesGrid — columns: Type, ActDate, EndDate, State, Value
-  const grid = $('#grdNonCompliancesGrid_tbl')
-  grid.find('tr[id*="grdNonCompliancesGrid_tr"]').each((_, row) => {
-    const $row = $(row)
-    const cells = $row.find('td')
-    if (cells.length < 4) return
-
-    entries.push({
-      tipo: $(cells[0]).text().trim() || null,
-      fecha_acta: $(cells[1]).text().trim() || null,
-      fecha_fin: $(cells[2]).text().trim() || null,
-      estado: $(cells[3]).text().trim() || null,
-      valor: cells.length > 4 ? $(cells[4]).text().trim() || null : null,
-    })
-  })
-
-  // Fallback: try indexed spans
-  if (entries.length === 0) {
-    for (let i = 0; i < 50; i++) {
-      const tipo = text($, `#spnNonCompliancesTypeSpan_${i}`)
-      if (!tipo) break
-      entries.push({
-        tipo,
-        estado: text($, `#spnNonCompliancesStateSpan_${i}`),
-        fecha_acta: text($, `#spnNonCompliancesActDateSpan_${i}`),
-        fecha_fin: text($, `#spnNonCompliancesEndDateSpan_${i}`),
-        valor: text($, `#spnNonCompliancesValueSpan_${i}`),
-      })
-    }
   }
 
   return { entries }

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import DeleteButton from '@/components/ui/DeleteButton'
+import { formatDate } from '@/lib/utils/format'
 
 // ── Types ──────────────────────────────────────────────────────
 type SupplierDoc = {
@@ -54,10 +55,6 @@ const DOC_TYPE_LABELS: Record<string, string> = {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
-function formatDate(d: string): string {
-  return new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
 function isExpiringSoon(expiresAt: string | null): boolean {
   if (!expiresAt) return false
   const thirtyDays = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]

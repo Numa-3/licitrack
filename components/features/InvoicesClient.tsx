@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import DeleteButton from '@/components/ui/DeleteButton'
-import { formatCurrency } from '@/lib/utils/format'
+import { formatCurrency, formatDate } from '@/lib/utils/format'
 import { fetchWithRetry } from '@/lib/supabase/retry'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -44,12 +44,6 @@ type Props = {
   items: ItemOption[]
   currentUserId: string
   userRole: string
-}
-
-// ── Helpers ────────────────────────────────────────────────────
-
-function formatDate(d: string): string {
-  return new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
 // ── Component ──────────────────────────────────────────────────

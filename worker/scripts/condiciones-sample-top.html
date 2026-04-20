@@ -1,0 +1,34 @@
+<!--
+  Sample: top half of Tab 2 "Condiciones" from SECOP II contract detail page.
+  Contains:
+    - Sidebar navigation (stepDiv_1..stepDiv_9 → maps to UI tabs 1..9)
+    - "Documentos Tipo" (yes/no)
+    - "Decreto 248 de 2021" (yes/no)
+    - "Sentencia T-302 de 2017" (yes/no radio)
+    - "Condiciones ejecución y entrega" (incoterm, renewable)
+    - "Configuración financiera - Garantías" (requirements, percentages, validity dates)
+
+  Section that was TRUNCATED (still need as sample):
+    - "Garantías del proveedor" — grid with actual uploaded policies (CO1.WRT.xxxxxxxx)
+      including columns: Id, Justificación, Tipo, Valor, Emisor, Fecha fin, Estado.
+
+  Key IDs observed in this sample (Condiciones tab):
+    - #selIncoterm                          → delivery options ("A definir")
+    - #rdbgRenewableContract (radio group)  → contract can be renewed
+    - #fdsWarrantiesSectionP2Gen            → fieldset "Configuración financiera - Garantías"
+    - #rdbgWarrantiesField                  → "¿Solicitud de garantías?" (yes/no radio)
+    - #rdbgSeriousnessField                 → "Seriedad de la oferta" (yes/no)
+    - #nbxSeriousnessPercentageField        → seriousness % ("10,00")
+    - #rdbgComplianceField                  → "Cumplimiento" (yes/no)
+    - #chkComplianceInvestmentCB            → "Buen manejo y correcta inversión del anticipo"
+    - #nbxComplianceInvestPercentageField   → anticipo % ("100,00")
+    - #dtmbComplianceInvestStartDateBox_txt → anticipo validity FROM ("1/07/2025 12:00:00 PM")
+    - #dtmbComplianceInvestEndDateBox_txt   → anticipo validity TO ("31/12/2025 11:59:00 PM")
+    - #chkComplianceContractCB              → "Cumplimiento del contrato"
+    - #nbxComplianceContractPercentageField → contract compliance % ("10,000000")
+    - #dtmbComplianceContractStartDateBox_txt → contract compliance validity FROM
+
+  IMPORTANT: "Fecha límite para entrega de garantías" (seen in user's screenshot)
+  is NOT in this sample — must be in the truncated bottom half, near the
+  "Garantías del proveedor" grid.
+-->

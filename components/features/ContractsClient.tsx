@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
+import { formatDate } from '@/lib/utils/format'
 
 // ── Types ──────────────────────────────────────────────────────
 type Contract = {
@@ -71,15 +72,6 @@ function daysRemaining(endDate: string | null): number | null {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   return Math.ceil((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-}
-
-function formatDate(date: string | null): string {
-  if (!date) return '—'
-  return new Date(date + 'T00:00:00').toLocaleDateString('es-CO', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  })
 }
 
 // ── Component ──────────────────────────────────────────────────

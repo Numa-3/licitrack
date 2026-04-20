@@ -3,6 +3,7 @@ import { config, SECOP } from './config.js'
 import { admin } from './db.js'
 import { decrypt } from './crypto.js'
 import { saveSession, type CookieEntry } from './session.js'
+import { solveCaptcha as solveCaptchaShared } from './captcha.js'
 
 /**
  * Login to SECOP using Playwright + CapSolver for CAPTCHA.
@@ -312,78 +313,10 @@ export async function discoverEntities(accountId: string): Promise<string[]> {
   }
 }
 
-// ── CAPTCHA solver ─────────────────────────────────────────
+// ── CAPTCHA solver (thin wrapper on shared helper, keeps [Login] log prefix) ──
 
 async function solveCaptcha(pageUrl: string, page: import('playwright').Page): Promise<string | null> {
-  if (!config.capsolverApiKey) {
-    console.warn('[Login] No CAPSOLVER_API_KEY — waiting 30s for manual solve...')
-    await page.waitForTimeout(30_000)
-    return null
-  }
-
-  const siteKey = await page.evaluate(`
-    (() => {
-      var el = document.querySelector('.g-recaptcha, [data-sitekey]');
-      return el ? el.getAttribute('data-sitekey') : null;
-    })()
-  `) as string | null
-
-  if (!siteKey) {
-    console.log('[Login] No reCAPTCHA detected')
-    return null
-  }
-
-  console.log(`[Login] reCAPTCHA detected. Solving with CapSolver...`)
-
-  const createRes = await fetch('https://api.capsolver.com/createTask', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      clientKey: config.capsolverApiKey,
-      task: {
-        type: 'ReCaptchaV2TaskProxyLess',
-        websiteURL: pageUrl,
-        websiteKey: siteKey,
-      },
-    }),
-  })
-
-  const createData = await createRes.json() as { errorId: number; taskId?: string; errorDescription?: string }
-  if (createData.errorId !== 0) {
-    console.error('[Login] CapSolver error:', createData.errorDescription)
-    return null
-  }
-
-  const taskId = createData.taskId!
-  console.log(`[Login] CapSolver task: ${taskId}`)
-
-  for (let i = 0; i < 40; i++) {
-    await new Promise(r => setTimeout(r, 3_000))
-
-    const resultRes = await fetch('https://api.capsolver.com/getTaskResult', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientKey: config.capsolverApiKey, taskId }),
-    })
-
-    const resultData = await resultRes.json() as {
-      status: string
-      solution?: { gRecaptchaResponse: string }
-      errorDescription?: string
-    }
-
-    if (resultData.status === 'ready') {
-      console.log('[Login] CAPTCHA solved!')
-      return resultData.solution!.gRecaptchaResponse
-    }
-    if (resultData.status === 'failed') {
-      console.error('[Login] CapSolver failed:', resultData.errorDescription)
-      return null
-    }
-  }
-
-  console.error('[Login] CapSolver timeout')
-  return null
+  return solveCaptchaShared(pageUrl, page, '[Login]')
 }
 
 // ── CLI ────────────────────────────────────────────────────

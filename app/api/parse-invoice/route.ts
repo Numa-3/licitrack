@@ -1,10 +1,14 @@
 import { NextRequest } from 'next/server'
+import { requireAuth } from '@/lib/admin'
 
 /**
  * Parse a DIAN UBL 2.1 XML invoice and extract key fields.
  * Accepts the raw XML text in the request body.
  */
 export async function POST(request: NextRequest) {
+  const auth = await requireAuth()
+  if ('error' in auth) return auth.error
+
   try {
     const { xml, pdf_text } = await request.json()
 
