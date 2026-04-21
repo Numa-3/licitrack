@@ -54,7 +54,13 @@ function buildPublicUrl(noticeUid: string): string {
 /**
  * Full scrape of the OpportunityDetail page.
  * Handles the reCAPTCHA gate automatically if CAPSOLVER_API_KEY is set.
+ *
+ * Reintenta hasta MAX_CAPTCHA_ATTEMPTS veces si SECOP devuelve el error de
+ * "content expired due to inactivity" — esto pasa cuando CapSolver tarda
+ * más de lo que SECOP tolera para la sesión del captcha específico.
  */
+const MAX_CAPTCHA_ATTEMPTS = 3
+
 export async function scrapeOpportunityDetail(noticeUid: string): Promise<OpportunityScrapeResult> {
   if (!/^CO1\.NTC\.\d+$/.test(noticeUid)) {
     throw new Error(`Invalid noticeUID: ${noticeUid}`)
@@ -68,58 +74,72 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
   const page = await context.newPage()
 
   try {
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    let html: string | null = null
 
-    // 1. If landed on a captcha gate, solve it
-    const gatedUrl = page.url()
-    const onCaptchaGate = /GoogleReCaptcha|recaptcha/i.test(gatedUrl)
-    const hasCaptchaEl = await page.evaluate('!!document.querySelector(".g-recaptcha, [data-sitekey]")')
-
-    if (onCaptchaGate || hasCaptchaEl) {
-      console.log(`[OpportunityScraper] Captcha gate detected, solving...`)
-      const token = await solveCaptcha(page.url(), page, '[OpportunityScraper]')
-      if (!token) {
-        throw new Error('Captcha solving failed — set CAPSOLVER_API_KEY or solve manually within 30s')
-      }
-      await injectCaptchaToken(page, token)
-
-      // The captcha page has a hidden btnCaptchaCheckButton that triggers verification.
-      // Click it to proceed — same flow as login.ts uses.
-      const clicked = await page.evaluate(`
-        (() => {
-          var btn = document.getElementById('btnCaptchaCheckButton');
-          if (btn) { btn.click(); return true; }
-          // Fallback: submit the captcha form
-          var form = document.getElementById('divmainDiv_frmCaptcha') || document.querySelector('form[action*="CaptchaCheck"]');
-          if (form) { form.submit(); return true; }
-          return false;
-        })()
-      `) as boolean
-
-      if (!clicked) {
-        throw new Error('Could not find captcha submit button/form')
+    for (let attempt = 1; attempt <= MAX_CAPTCHA_ATTEMPTS; attempt++) {
+      if (attempt > 1) {
+        console.log(`[OpportunityScraper] ${noticeUid}: retry attempt ${attempt}/${MAX_CAPTCHA_ATTEMPTS}`)
       }
 
-      // Wait for navigation past captcha
-      await page.waitForURL(
-        url => !/GoogleReCaptcha/i.test(url.toString()),
-        { timeout: 30_000 },
-      ).catch(() => {
-        console.warn('[OpportunityScraper] Post-captcha navigation did not complete in 30s')
-      })
-      await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => undefined)
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+
+      // 1. If landed on a captcha gate, solve it
+      const gatedUrl = page.url()
+      const onCaptchaGate = /GoogleReCaptcha|recaptcha/i.test(gatedUrl)
+      const hasCaptchaEl = await page.evaluate('!!document.querySelector(".g-recaptcha, [data-sitekey]")')
+
+      if (onCaptchaGate || hasCaptchaEl) {
+        console.log(`[OpportunityScraper] Captcha gate detected, solving...`)
+        const token = await solveCaptcha(page.url(), page, '[OpportunityScraper]')
+        if (!token) {
+          throw new Error('Captcha solving failed — set CAPSOLVER_API_KEY or solve manually within 30s')
+        }
+        await injectCaptchaToken(page, token)
+
+        const clicked = await page.evaluate(`
+          (() => {
+            var btn = document.getElementById('btnCaptchaCheckButton');
+            if (btn) { btn.click(); return true; }
+            var form = document.getElementById('divmainDiv_frmCaptcha') || document.querySelector('form[action*="CaptchaCheck"]');
+            if (form) { form.submit(); return true; }
+            return false;
+          })()
+        `) as boolean
+
+        if (!clicked) {
+          throw new Error('Could not find captcha submit button/form')
+        }
+
+        await page.waitForURL(
+          url => !/GoogleReCaptcha/i.test(url.toString()),
+          { timeout: 30_000 },
+        ).catch(() => {
+          console.warn('[OpportunityScraper] Post-captcha navigation did not complete in 30s')
+        })
+        await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => undefined)
+      }
+
+      // 2. Detectar página de error ("content expired due to inactivity")
+      const finalUrl = page.url()
+      if (/\/ErrorPage\/|content.*expired|inactivity/i.test(finalUrl)) {
+        console.warn(`[OpportunityScraper] ${noticeUid}: session expired during captcha (attempt ${attempt})`)
+        if (attempt < MAX_CAPTCHA_ATTEMPTS) continue
+        throw new Error(`Session expired after ${MAX_CAPTCHA_ATTEMPTS} captcha attempts (SECOP timeout)`)
+      }
+
+      if (!finalUrl.includes('OpportunityDetail')) {
+        throw new Error(`Unexpected URL after captcha: ${finalUrl}`)
+      }
+
+      // Success
+      await page.waitForTimeout(2_000)
+      html = await page.content()
+      break
     }
 
-    // 2. We should now be on the real OpportunityDetail page
-    const finalUrl = page.url()
-    if (!finalUrl.includes('OpportunityDetail')) {
-      throw new Error(`Unexpected URL after captcha: ${finalUrl}`)
+    if (!html) {
+      throw new Error('Failed to load OpportunityDetail after all retry attempts')
     }
-
-    // Give the page a moment for async content
-    await page.waitForTimeout(2_000)
-
-    const html = await page.content()
     // Extraer con cheerio en vez de page.evaluate() para evitar el problema
     // de `__name is not defined` — tsx/esbuild con keepNames transforma tanto
     // function declarations como const arrow functions cuando corren dentro
