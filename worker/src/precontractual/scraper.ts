@@ -116,35 +116,33 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
           throw new Error('Could not find captcha submit button/form')
         }
 
-        await page.waitForURL(
-          url => !/GoogleReCaptcha/i.test(url.toString()),
+        // Esperar que aparezca el contenido real — SECOP mantiene la misma URL
+        // después del captcha y solo reemplaza el body. Las señales de éxito son:
+        // elemento .CompanyFullName o #fdsRequestSummaryInfo en el DOM.
+        // Si vemos URL de ErrorPage, es sesión expirada.
+        const contentAppeared = await page.waitForSelector(
+          '.CompanyFullName, #fdsRequestSummaryInfo, #cbxBasePriceValue',
           { timeout: 30_000 },
-        ).catch(() => {
-          console.warn('[OpportunityScraper] Post-captcha navigation did not complete in 30s')
-        })
-        await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => undefined)
+        ).then(() => true).catch(() => false)
+
+        if (!contentAppeared) {
+          const currentUrl = page.url()
+          console.warn(`[OpportunityScraper] Content never appeared after captcha. URL: ${currentUrl}`)
+
+          if (/\/ErrorPage\/|inactivity/i.test(currentUrl)) {
+            console.warn(`[OpportunityScraper] ${noticeUid}: session expired (attempt ${attempt})`)
+            if (attempt < MAX_CAPTCHA_ATTEMPTS) continue
+            throw new Error(`Session expired after ${MAX_CAPTCHA_ATTEMPTS} captcha attempts`)
+          }
+          // Si no hay contenido y no es error page, reintentar
+          if (attempt < MAX_CAPTCHA_ATTEMPTS) continue
+          throw new Error('Content never loaded after captcha (unknown cause)')
+        }
       }
 
-      // 2. Detectar página de error ("content expired due to inactivity")
-      const finalUrl = page.url()
-      if (/\/ErrorPage\/|content.*expired|inactivity/i.test(finalUrl)) {
-        console.warn(`[OpportunityScraper] ${noticeUid}: session expired during captcha (attempt ${attempt})`)
-        if (attempt < MAX_CAPTCHA_ATTEMPTS) continue
-        throw new Error(`Session expired after ${MAX_CAPTCHA_ATTEMPTS} captcha attempts (SECOP timeout)`)
-      }
-
-      if (!finalUrl.includes('OpportunityDetail')) {
-        throw new Error(`Unexpected URL after captcha: ${finalUrl}`)
-      }
-
-      // Esperar que termine la carga del contenido dinámico. SECOP carga el
-      // cronograma y otros datos desde blobs de Azure vía AJAX post-render.
-      // networkidle espera que no haya requests de red por 500ms.
-      await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {
-        console.warn('[OpportunityScraper] networkidle timeout — continuando igual')
-      })
-      // Espera extra por si hay animaciones o deferreds
-      await page.waitForTimeout(3_000)
+      // networkidle por si hay blobs async terminando de cargar
+      await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined)
+      await page.waitForTimeout(1_500)
       html = await page.content()
       break
     }
