@@ -102,18 +102,27 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
         }
         await injectCaptchaToken(page, token)
 
-        const clicked = await page.evaluate(`
-          (() => {
-            var btn = document.getElementById('btnCaptchaCheckButton');
-            if (btn) { btn.click(); return true; }
-            var form = document.getElementById('divmainDiv_frmCaptcha') || document.querySelector('form[action*="CaptchaCheck"]');
-            if (form) { form.submit(); return true; }
-            return false;
-          })()
-        `) as boolean
-
-        if (!clicked) {
-          throw new Error('Could not find captcha submit button/form')
+        // Nota: injectCaptchaToken dispara el data-callback del reCAPTCHA, lo
+        // que en SECOP ya ejecuta el submit. El click adicional al botón puede
+        // fallar con "Execution context destroyed" porque la página ya está
+        // navegando — lo cual es señal de éxito, no de error. Por eso el click
+        // es best-effort y swallow del error esperado.
+        try {
+          await page.evaluate(`
+            (() => {
+              var btn = document.getElementById('btnCaptchaCheckButton');
+              if (btn) { btn.click(); return; }
+              var form = document.getElementById('divmainDiv_frmCaptcha') || document.querySelector('form[action*="CaptchaCheck"]');
+              if (form) form.submit();
+            })()
+          `)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          // Si la página ya está navegando por el callback, el evaluate falla.
+          // No es error — es éxito prematuro. Cualquier otro error sí se propaga.
+          if (!/Execution context.*destroyed|Target closed|navigation/i.test(msg)) {
+            throw err
+          }
         }
 
         // Esperar que aparezca el contenido real — SECOP mantiene la misma URL
