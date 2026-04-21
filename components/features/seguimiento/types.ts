@@ -5,6 +5,7 @@ export type Process = {
   secop_process_id: string
   referencia_proceso: string | null
   entidad: string
+  custom_name: string | null
   objeto: string
   descripcion: string | null
   modalidad: string | null

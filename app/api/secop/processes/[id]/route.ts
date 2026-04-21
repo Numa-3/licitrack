@@ -17,7 +17,11 @@ export async function PATCH(
 
   const { id } = await params
   const body = await request.json()
-  const { radar_state, monitoring_enabled } = body as { radar_state?: string; monitoring_enabled?: boolean }
+  const { radar_state, monitoring_enabled, custom_name } = body as {
+    radar_state?: string
+    monitoring_enabled?: boolean
+    custom_name?: string | null
+  }
 
   const updates: Record<string, unknown> = {}
 
@@ -34,6 +38,11 @@ export async function PATCH(
 
   if (monitoring_enabled !== undefined) {
     updates.monitoring_enabled = monitoring_enabled
+  }
+
+  if (custom_name !== undefined) {
+    const trimmed = typeof custom_name === 'string' ? custom_name.trim() : ''
+    updates.custom_name = trimmed.length > 0 ? trimmed.slice(0, 120) : null
   }
 
   if (Object.keys(updates).length === 0) {

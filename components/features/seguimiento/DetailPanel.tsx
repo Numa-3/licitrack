@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, ExternalLink, Loader2, Calendar } from 'lucide-react'
+import { X, ExternalLink, Loader2, Calendar, Pencil, Check, X as XIcon } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils/format'
 import type { Process, Change, CronogramaEvent } from './types'
 import { timeAgo } from './helpers'
@@ -13,13 +13,21 @@ type SnapshotInfo = {
   source_type: string
 }
 
-export default function DetailPanel({ process: p, onClose }: { process: Process; onClose: () => void }) {
+export default function DetailPanel({ process: p, onClose, onRename, canEdit }: {
+  process: Process
+  onClose: () => void
+  onRename?: (id: string, name: string | null) => Promise<void>
+  canEdit?: boolean
+}) {
   const [cronograma, setCronograma] = useState<CronogramaEvent[] | null>(null)
   const [changes, setChanges] = useState<Change[] | null>(null)
   const [lastSnapshot, setLastSnapshot] = useState<SnapshotInfo | null>(null)
   const [prevSnapshot, setPrevSnapshot] = useState<SnapshotInfo | null>(null)
   const [snapshotMatch, setSnapshotMatch] = useState<boolean | null>(null)
   const [loadingData, setLoadingData] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState(p.custom_name ?? '')
+  const [savingName, setSavingName] = useState(false)
 
   useEffect(() => {
     setLoadingData(true)
@@ -49,6 +57,72 @@ export default function DetailPanel({ process: p, onClose }: { process: Process;
         </div>
 
         <div className="px-6 py-5 space-y-6">
+          {/* Nombre personalizado */}
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Nombre</label>
+            {editingName ? (
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  type="text"
+                  value={nameDraft}
+                  onChange={e => setNameDraft(e.target.value)}
+                  placeholder={p.entidad}
+                  maxLength={120}
+                  autoFocus
+                  className="flex-1 px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  onKeyDown={async e => {
+                    if (e.key === 'Escape') { setEditingName(false); setNameDraft(p.custom_name ?? '') }
+                    if (e.key === 'Enter' && onRename) {
+                      setSavingName(true)
+                      await onRename(p.id, nameDraft.trim() || null)
+                      setSavingName(false)
+                      setEditingName(false)
+                    }
+                  }}
+                />
+                <button
+                  onClick={async () => {
+                    if (!onRename) return
+                    setSavingName(true)
+                    await onRename(p.id, nameDraft.trim() || null)
+                    setSavingName(false)
+                    setEditingName(false)
+                  }}
+                  disabled={savingName}
+                  className="p-1.5 text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                  title="Guardar"
+                >
+                  {savingName ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                </button>
+                <button
+                  onClick={() => { setEditingName(false); setNameDraft(p.custom_name ?? '') }}
+                  className="p-1.5 text-gray-500 hover:bg-gray-100 rounded"
+                  title="Cancelar"
+                >
+                  <XIcon size={16} />
+                </button>
+              </div>
+            ) : (
+              <div className="mt-1 flex items-center gap-2 group">
+                <p className="text-base font-semibold text-gray-900 truncate">
+                  {p.custom_name || <span className="text-gray-400 font-normal italic">Sin nombre personalizado</span>}
+                </p>
+                {canEdit && (
+                  <button
+                    onClick={() => { setNameDraft(p.custom_name ?? ''); setEditingName(true) }}
+                    className="p-1 text-gray-400 hover:text-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Editar nombre"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                )}
+              </div>
+            )}
+            {p.custom_name && !editingName && (
+              <p className="text-[11px] text-gray-400 mt-0.5">{p.entidad}</p>
+            )}
+          </div>
+
           {/* Source + monitoring status */}
           <div className="flex items-center gap-2 flex-wrap">
             <SourceBadge source={p.source} />

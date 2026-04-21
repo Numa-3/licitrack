@@ -149,6 +149,24 @@ export default function SecopSeguimientoClient({
     }
   }
 
+  const renameProcess = async (id: string, name: string | null) => {
+    const prev = processes.map(p => ({ ...p }))
+    setProcesses(ps => ps.map(p => p.id === id ? { ...p, custom_name: name } : p))
+    setSelected(s => s && s.id === id ? { ...s, custom_name: name } : s)
+    const res = await fetch(`/api/secop/processes/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ custom_name: name }),
+    })
+    if (!res.ok) {
+      setProcesses(prev)
+      setSelected(s => s && s.id === id ? prev.find(p => p.id === id) ?? s : s)
+      showToast('Error al guardar nombre')
+      return
+    }
+    showToast(name ? 'Nombre guardado' : 'Nombre eliminado', 'success')
+  }
+
   const toggleAccount = async (id: string, active: boolean) => {
     const res = await fetch(`/api/secop/accounts/${id}`, {
       method: 'PATCH',
@@ -350,7 +368,14 @@ export default function SecopSeguimientoClient({
         </>
       )}
 
-      {selected && <DetailPanel process={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <DetailPanel
+          process={selected}
+          onClose={() => setSelected(null)}
+          onRename={renameProcess}
+          canEdit={isJefe}
+        />
+      )}
     </div>
   )
 }
@@ -430,8 +455,10 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring }: {
               <tr key={p.id} onClick={() => onSelect(p)}
                 className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${!p.monitoring_enabled ? 'opacity-50' : ''} ${isPrecontractual ? 'bg-violet-50/40 hover:bg-violet-50/70' : ''}`}>
                 <td className={`px-4 py-3 max-w-[300px] ${isPrecontractual ? 'border-l-2 border-violet-400' : ''}`}>
-                  <p className="font-medium text-gray-900 truncate">{p.entidad}</p>
-                  <p className="text-xs text-gray-500 truncate mt-0.5">{p.objeto}</p>
+                  <p className="font-medium text-gray-900 truncate">{p.custom_name || p.entidad}</p>
+                  <p className="text-xs text-gray-500 truncate mt-0.5">
+                    {p.custom_name ? p.entidad : p.objeto}
+                  </p>
                   <div className="flex items-center gap-2 mt-1">
                     {isPrecontractual ? (
                       <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-600/20">
