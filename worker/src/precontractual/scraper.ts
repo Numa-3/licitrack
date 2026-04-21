@@ -50,7 +50,11 @@ export type OpportunityScrapeResult = {
 }
 
 function buildPublicUrl(noticeUid: string): string {
-  return `https://community.secop.gov.co/Public/Tendering/OpportunityDetail/Index?noticeUID=${noticeUid}&isFromPublicArea=True&isModal=False`
+  // Usamos isModal=true&asPopupView=true porque ese modo trae TODO el contenido
+  // inline (cronograma, entidad, objeto, valor) vía Azure blob. La variante
+  // isModal=false devuelve un shell vacío que depende de scripts que no siempre
+  // ejecutamos a tiempo.
+  return `https://community.secop.gov.co/Public/Tendering/OpportunityDetail/Index?noticeUID=${noticeUid}&isFromPublicArea=True&isModal=true&asPopupView=true`
 }
 
 /**
@@ -133,8 +137,14 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
         throw new Error(`Unexpected URL after captcha: ${finalUrl}`)
       }
 
-      // Success
-      await page.waitForTimeout(2_000)
+      // Esperar que termine la carga del contenido dinámico. SECOP carga el
+      // cronograma y otros datos desde blobs de Azure vía AJAX post-render.
+      // networkidle espera que no haya requests de red por 500ms.
+      await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {
+        console.warn('[OpportunityScraper] networkidle timeout — continuando igual')
+      })
+      // Espera extra por si hay animaciones o deferreds
+      await page.waitForTimeout(3_000)
       html = await page.content()
       break
     }
