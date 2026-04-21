@@ -94,6 +94,11 @@ export async function solveCaptcha(
 /**
  * Inject a solved reCAPTCHA token into the page so the form accepts it.
  * Covers multiple reCAPTCHA variants (v2, enterprise, multi-iframe).
+ *
+ * CRÍTICO: además de poblar la textarea, disparamos el data-callback que
+ * Google reCAPTCHA usa para notificar "resuelto" al host. Sin esto, SECOP
+ * no registra el token aunque esté en la textarea — el submit del captcha
+ * queda incompleto.
  */
 export async function injectCaptchaToken(page: Page, token: string): Promise<void> {
   await page.evaluate(`
@@ -113,6 +118,15 @@ export async function injectCaptchaToken(page: Page, token: string): Promise<voi
       window.grecaptcha.getResponse = function() { return token; };
       window.grecaptcha.enterprise = window.grecaptcha.enterprise || {};
       window.grecaptcha.enterprise.getResponse = function() { return token; };
+
+      // Disparar data-callback si existe — sin esto SECOP no activa el flow de submit
+      var captchaEl = document.querySelector('.g-recaptcha, [data-sitekey]');
+      if (captchaEl) {
+        var cbName = captchaEl.getAttribute('data-callback');
+        if (cbName && typeof window[cbName] === 'function') {
+          try { window[cbName](token); } catch (e) { /* callback errored, continue */ }
+        }
+      }
     })()
   `)
 }
