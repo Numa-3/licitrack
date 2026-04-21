@@ -136,19 +136,15 @@ export async function fetchProcessPhases(noticeUid: string): Promise<ApiRecord[]
   // CRÍTICO: los contadores de NTC y REQ son INDEPENDIENTES — pueden coincidir
   // numéricamente pero apuntar a procesos distintos. Por eso hay que VERIFICAR
   // después que el urlproceso.url del resultado mencione el NTC original; si
-  // no, es un false positive y debemos descartarlo.
+  // no, es un false positive y lo descartamos.
   let initial = await queryApi(`id_del_proceso='CO1.REQ.${numericPart}'`, 5)
 
-  // Validar que el urlproceso realmente apunte al NTC pedido. Si el número
-  // numérico REQ coincidió por azar con otro proceso, el URL no lo contendrá.
+  // Filtrar records cuyo URL no corresponde al NTC pedido (REQ match por azar).
   initial = initial.filter(r => (r.urlproceso?.url || '').toUpperCase().includes(noticeUid))
 
-  // Fallback lento: buscar por noticeUID embebido en urlproceso.url. Cubre
-  // procesos re-noticeados y el caso donde el atajo REQ trae false positive.
-  if (initial.length === 0) {
-    initial = await queryApi(`urlproceso.url like '%${noticeUid}%'`, 5)
-  }
-
+  // NOTA: No hay forma viable de buscar por NTC en este dataset (urlproceso
+  // es Socrata URL type → no soporta LIKE). Si la query REQ no valida, el
+  // caller debe invocar scraper-first con captcha.
   if (initial.length === 0) return []
 
   const portfolio = initial[0].id_del_portafolio
