@@ -76,22 +76,24 @@ export async function fetchProcessPhases(noticeUid: string): Promise<ApiRecord[]
   }
   const numericPart = noticeUid.replace(/^CO1\.NTC\./, '')
 
-  // Strategy: query rápida primero (igualdad directa por id_del_proceso)
-  // La query LIKE en urlproceso.url hace full scan en Socrata — llega a tardar
-  // 20-30s y excede el timeout de 10s de Vercel. En cambio id_del_proceso tiene
-  // índice y resuelve en <1s. SECOP usa el mismo contador numérico para NTC y
-  // REQ, así que en ~99% de casos esta query alcanza.
+  // Query rápida por id_del_proceso=CO1.REQ.X (tiene índice, <1s).
+  // CRÍTICO: los contadores de NTC y REQ son INDEPENDIENTES — pueden coincidir
+  // numéricamente pero apuntar a procesos distintos. Por eso hay que VERIFICAR
+  // después que el urlproceso.url del resultado mencione el NTC original; si
+  // no, son datos de otro proceso y debemos descartarlos.
   let initial = await queryApi(`id_del_proceso='CO1.REQ.${numericPart}'`, 5, 6_000)
 
-  // Fallback: si el id_del_proceso tiene otro prefijo (raro pero posible),
-  // probamos la query más lenta por URL. Si esta también falla por timeout,
-  // el caller captura la excepción y trata el proceso como "no indexado aún".
+  // Validación: el urlproceso debe contener el noticeUID. Si no, los números
+  // coincidían por azar y matchearon otro proceso. Descartamos y caemos al
+  // fallback lento.
+  initial = initial.filter(r => (r.urlproceso?.url || '').toUpperCase().includes(noticeUid))
+
+  // Fallback lento: buscar por URL directa. Si excede timeout, caller trata
+  // el proceso como "no indexado aún" y arranca scraper-first.
   if (initial.length === 0) {
     try {
       initial = await queryApi(`urlproceso.url like '%${noticeUid}%'`, 5, 8_000)
     } catch (err) {
-      // Timeout/abort en la query lenta — devolver vacío para que el caller
-      // haga scraper-first en vez de 502.
       if (err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message))) {
         return []
       }
