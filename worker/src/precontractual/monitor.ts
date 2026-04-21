@@ -1,13 +1,14 @@
 import { admin } from '../db.js'
 import { snapshotByNoticeUid } from './fetcher.js'
 import { diffPrecontractualSnapshots, hashPrecontractualSnapshot, findNextDeadline } from './diff.js'
-import { scrapeOpportunityDetail, shouldTriggerRescrape } from './scraper.js'
+import { scrapeOpportunityDetail, shouldTriggerRescrape, type BasicProcessInfo, type CronogramaEvento } from './scraper.js'
 import type { PrecontractualSnapshot } from './types.js'
 
 type MonitoredProcess = {
   id: string
   notice_uid: string | null
   secop_process_id: string
+  api_pending?: boolean
 }
 
 /**
@@ -30,7 +31,7 @@ export async function runPrecontractualMonitorCycle(): Promise<{ checked: number
   try {
     const { data: processes } = await admin
       .from('secop_processes')
-      .select('id, notice_uid, secop_process_id')
+      .select('id, notice_uid, secop_process_id, api_pending')
       .eq('monitoring_enabled', true)
       .eq('tipo_proceso', 'precontractual')
       .not('notice_uid', 'is', null)
@@ -78,50 +79,102 @@ async function monitorOneProcess(
   proc: MonitoredProcess,
   ourNits: Set<string>,
 ): Promise<{ changesFound: number }> {
-  // 1. Pull from the public API (no captcha) — cheap, fast, no cost
-  const snapshot = await snapshotByNoticeUid(proc.notice_uid!)
+  // 1. Try the public API first (cheap, fast, no captcha cost)
+  let snapshot: PrecontractualSnapshot | null = null
+  let apiFound = false
+  try {
+    snapshot = await snapshotByNoticeUid(proc.notice_uid!)
+    apiFound = true
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    // "No records found" → proceso aún no indexado, caemos a scraper-first
+    if (!/No records found/i.test(msg)) throw err
+    console.log(`[Precontractual] ${proc.notice_uid}: API vacía, fallback a scraper-first`)
+  }
 
-  // 2. Inspect the last snapshot to decide whether to re-scrape with captcha
+  // 2. Load latest snapshot to compare / preserve cronograma
   const { data: latest } = await admin
     .from('secop_process_snapshots')
     .select('snapshot_json, hash')
     .eq('process_id', proc.id)
-    .eq('source_type', 'api_precontractual')
+    .in('source_type', ['api_precontractual', 'scraper_bootstrap'])
     .order('captured_at', { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
 
   const previous = (latest?.snapshot_json as PrecontractualSnapshot | null) || null
+  const isBootstrap = !previous
 
-  // Preserve previous cronograma (captcha-scraped) unless we re-scrape
-  if (previous?.cronograma) {
-    snapshot.cronograma = previous.cronograma
-    snapshot.cronograma_captured_at = previous.cronograma_captured_at
+  // 3. Decidir si necesitamos scrapear con captcha
+  let needsScrape = false
+  if (!apiFound) {
+    // API vacía → siempre scrape si no tenemos snapshot aún (bootstrap).
+    // Si ya tenemos un snapshot del scraper, solo re-scrape cada ~6h (para no
+    // quemar créditos esperando que la API aparezca).
+    if (isBootstrap) {
+      needsScrape = true
+    } else {
+      const lastCaptured = previous?.cronograma_captured_at
+      const age = lastCaptured ? Date.now() - new Date(lastCaptured).getTime() : Infinity
+      needsScrape = age > 6 * 60 * 60 * 1000 // 6h
+    }
+  } else if (isBootstrap) {
+    // API encontró el proceso y es la primera vez: scrape para capturar cronograma con horas
+    needsScrape = true
+  } else if (previous && snapshot) {
+    // API + snapshot previo: scrape solo si cambió algo relevante
+    needsScrape = shouldTriggerRescrape({
+      faseChanged: previous.fase_actual !== snapshot.fase_actual,
+      deadlineChanged:
+        previous.phases.at(-1)?.fecha_recepcion !== snapshot.phases.at(-1)?.fecha_recepcion
+        || previous.phases.at(-1)?.fecha_apertura_efectiva !== snapshot.phases.at(-1)?.fecha_apertura_efectiva,
+      awardedTransitioned: !previous.adjudicado && snapshot.adjudicado,
+    })
   }
 
-  // 3. Decide whether to re-scrape OpportunityDetail (costs 1 captcha)
-  //    We only do this when the API signals something worth re-checking:
-  //    new phase, changed key dates, or brand-new award.
-  const needsRescrape = previous ? shouldTriggerRescrape({
-    faseChanged: previous.fase_actual !== snapshot.fase_actual,
-    deadlineChanged:
-      previous.phases.at(-1)?.fecha_recepcion !== snapshot.phases.at(-1)?.fecha_recepcion
-      || previous.phases.at(-1)?.fecha_apertura_efectiva !== snapshot.phases.at(-1)?.fecha_apertura_efectiva,
-    awardedTransitioned: !previous.adjudicado && snapshot.adjudicado,
-  }) : false
-
-  // Bootstrap case: first snapshot of this process → capture cronograma with hours
-  const isBootstrap = !previous
-  if (isBootstrap || needsRescrape) {
+  let scrapedCronograma: CronogramaEvento[] | null = null
+  let scrapedBasicInfo: BasicProcessInfo | null = null
+  let scrapedAt: string | null = null
+  if (needsScrape) {
     try {
-      console.log(`[Precontractual] ${proc.notice_uid}: ${isBootstrap ? 'bootstrap' : 're-scrape'} (captcha)`)
+      const reason = !apiFound ? 'scraper-first' : (isBootstrap ? 'bootstrap' : 're-scrape')
+      console.log(`[Precontractual] ${proc.notice_uid}: ${reason} (captcha)`)
       const scraped = await scrapeOpportunityDetail(proc.notice_uid!)
-      snapshot.cronograma = scraped.cronograma
-      snapshot.cronograma_captured_at = scraped.scraped_at
+      scrapedCronograma = scraped.cronograma
+      scrapedBasicInfo = scraped.basic_info
+      scrapedAt = scraped.scraped_at
     } catch (err) {
-      console.error(`[Precontractual] ${proc.notice_uid}: scrape failed, keeping previous cronograma:`,
+      console.error(`[Precontractual] ${proc.notice_uid}: scrape falló:`,
         err instanceof Error ? err.message : err)
     }
+  }
+
+  // 4. Si no hay snapshot de la API y no pudimos scrapear, no hay nada que persistir
+  if (!snapshot && !scrapedCronograma && !scrapedBasicInfo) {
+    console.log(`[Precontractual] ${proc.notice_uid}: sin datos de API ni scraper — skip`)
+    await admin.from('secop_processes')
+      .update({ last_monitored_at: new Date().toISOString() })
+      .eq('id', proc.id)
+    return { changesFound: 0 }
+  }
+
+  // 5. Si API vacía pero scraper funcionó, construir snapshot mínimo desde scraper
+  if (!snapshot && (scrapedCronograma || scrapedBasicInfo)) {
+    snapshot = buildMinimalSnapshotFromScraper(proc.notice_uid!, scrapedBasicInfo, scrapedCronograma, scrapedAt)
+  } else if (snapshot) {
+    // Preservar cronograma previo si el scrape no nos dio uno nuevo
+    if (scrapedCronograma) {
+      snapshot.cronograma = scrapedCronograma
+      snapshot.cronograma_captured_at = scrapedAt
+    } else if (previous?.cronograma) {
+      snapshot.cronograma = previous.cronograma
+      snapshot.cronograma_captured_at = previous.cronograma_captured_at
+    }
+  }
+
+  if (!snapshot) {
+    // Defensive: should never happen after above branches
+    return { changesFound: 0 }
   }
 
   // 4. Hash (now includes cronograma) — decide if there's anything new to persist
@@ -134,15 +187,15 @@ async function monitorOneProcess(
     return { changesFound: 0 }
   }
 
-  // 5. Persist new snapshot
+  // Persist new snapshot — distinct source_type to flag scraper-only records
   await admin.from('secop_process_snapshots').insert({
     process_id: proc.id,
     snapshot_json: snapshot,
-    source_type: 'api_precontractual',
+    source_type: apiFound ? 'api_precontractual' : 'scraper_bootstrap',
     hash: snapshotHash,
   })
 
-  // 6. Diff
+  // Diff
   const changes = diffPrecontractualSnapshots(previous, snapshot, ourNits)
 
   if (changes.length > 0) {
@@ -162,7 +215,7 @@ async function monitorOneProcess(
 
   // Keep process row fields in sync for UI display
   const { deadline, label } = findNextDeadline(snapshot)
-  await admin.from('secop_processes').update({
+  const updatePayload: Record<string, unknown> = {
     last_monitored_at: new Date().toISOString(),
     next_deadline: deadline,
     next_deadline_label: label,
@@ -178,7 +231,13 @@ async function monitorOneProcess(
     nit_adjudicado: snapshot.proveedor_adjudicado?.nit || null,
     nombre_adjudicado: snapshot.proveedor_adjudicado?.nombre || null,
     valor_adjudicado: snapshot.proveedor_adjudicado?.valor || null,
-  }).eq('id', proc.id)
+  }
+  // Si la API ahora sí encontró el proceso, limpiamos el flag pending
+  if (apiFound && proc.api_pending) {
+    updatePayload.api_pending = false
+    console.log(`[Precontractual] ${proc.notice_uid}: api_pending → false (API lo indexó)`)
+  }
+  await admin.from('secop_processes').update(updatePayload).eq('id', proc.id)
 
   if (changes.length > 0) {
     console.log(`[Precontractual] ${proc.notice_uid}: ${changes.length} change(s) detected`)
@@ -190,6 +249,44 @@ async function monitorOneProcess(
   }
 
   return { changesFound: changes.length }
+}
+
+/**
+ * Build a minimal PrecontractualSnapshot from scraper data when the public
+ * API hasn't indexed the process yet. Fields absent from the scraper are
+ * left null — the monitor keeps retrying the API and enriches when it appears.
+ */
+function buildMinimalSnapshotFromScraper(
+  noticeUid: string,
+  basic: BasicProcessInfo | null,
+  cronograma: CronogramaEvento[] | null,
+  scrapedAt: string | null,
+): PrecontractualSnapshot {
+  return {
+    notice_uid: noticeUid,
+    url_publica: `https://community.secop.gov.co/Public/Tendering/OpportunityDetail/Index?noticeUID=${noticeUid}&isFromPublicArea=True&isModal=False`,
+    entidad: basic?.entidad || null,
+    nit_entidad: basic?.nit_entidad || null,
+    departamento: null,
+    ciudad: null,
+    orden_entidad: null,
+    unidad_contratacion: null,
+    nombre_procedimiento: basic?.objeto || null,
+    descripcion: basic?.descripcion || null,
+    modalidad: basic?.modalidad || null,
+    justificacion_modalidad: null,
+    tipo_contrato: basic?.tipo_contrato || null,
+    categoria_principal: null,
+    precio_base: basic?.precio_base || null,
+    fase_actual: basic?.fase || null,
+    estado_actual: basic?.estado || null,
+    adjudicado: false,
+    proveedor_adjudicado: null,
+    phases: [],
+    cronograma: cronograma || null,
+    cronograma_captured_at: scrapedAt,
+    scraped_at: scrapedAt || new Date().toISOString(),
+  }
 }
 
 function collectNitsFromAccounts(

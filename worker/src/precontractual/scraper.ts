@@ -23,10 +23,26 @@ export type CronogramaEvento = {
   estado: string | null           // "Próximo" / "Finalizado" / etc.
 }
 
+export type BasicProcessInfo = {
+  entidad: string | null
+  nit_entidad: string | null
+  referencia: string | null
+  objeto: string | null
+  descripcion: string | null
+  modalidad: string | null
+  tipo_contrato: string | null
+  precio_base: string | null       // string crudo, ej: "4.616.146.330 COP"
+  fase: string | null
+  estado: string | null
+  duracion: string | null
+  unidad_duracion: string | null
+}
+
 export type OpportunityScrapeResult = {
   notice_uid: string
   scraped_at: string
   cronograma: CronogramaEvento[]
+  basic_info: BasicProcessInfo
   raw_html_size: number
 }
 
@@ -103,19 +119,160 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
     await page.waitForTimeout(2_000)
 
     const html = await page.content()
-    const cronograma = await extractCronograma(page)
+    const [cronograma, basicInfo] = await Promise.all([
+      extractCronograma(page),
+      extractBasicInfo(page),
+    ])
 
-    console.log(`[OpportunityScraper] ${noticeUid}: ${cronograma.length} eventos del cronograma extraídos`)
+    console.log(`[OpportunityScraper] ${noticeUid}: ${cronograma.length} eventos del cronograma, entidad="${basicInfo.entidad || '?'}", valor=${basicInfo.precio_base || '?'}`)
 
     return {
       notice_uid: noticeUid,
       scraped_at: new Date().toISOString(),
       cronograma,
+      basic_info: basicInfo,
       raw_html_size: html.length,
     }
   } finally {
     await browser.close()
   }
+}
+
+/**
+ * Extract basic process information from the OpportunityDetail page DOM.
+ * Used during bootstrap when the public API dataset hasn't indexed the
+ * process yet — gives us enough data to populate the UI until the API
+ * catches up.
+ *
+ * SECOP renders labels with `data-sentencecode` attributes and values in
+ * sibling cells. Strategy:
+ *   1. Map known sentencecode patterns → field name
+ *   2. For each label found, find the adjacent "value cell" in the row
+ *   3. Fall back to label-text matching if sentencecodes absent
+ *
+ * Returns nulls for anything we can't find — monitor handles partial data.
+ */
+async function extractBasicInfo(page: Page): Promise<BasicProcessInfo> {
+  return await page.evaluate(() => {
+    // Find the value cell associated with a label element.
+    // Label and value are typically sibling <td> inside the same <tr>,
+    // or the value is in the NEXT sibling td of the label's parent td.
+    function getValueNear(labelEl: Element): string | null {
+      // Strategy A: next sibling of the label's closest <td>
+      const labelTd = labelEl.closest('td')
+      if (labelTd) {
+        let next = labelTd.nextElementSibling
+        while (next && !next.textContent?.trim()) next = next.nextElementSibling
+        if (next?.textContent?.trim()) return normalize(next.textContent)
+      }
+      // Strategy B: label's parent row, last cell with content
+      const row = labelEl.closest('tr')
+      if (row) {
+        const cells = Array.from(row.querySelectorAll('td'))
+        for (let i = cells.length - 1; i >= 0; i--) {
+          const t = normalize(cells[i].textContent || '')
+          if (t && !cells[i].contains(labelEl)) return t
+        }
+      }
+      return null
+    }
+
+    function normalize(s: string): string {
+      return s.replace(/\s+/g, ' ').trim()
+    }
+
+    function findBySentenceCode(patterns: RegExp[]): string | null {
+      const labels = Array.from(document.querySelectorAll('[data-sentencecode]'))
+      for (const label of labels) {
+        const code = label.getAttribute('data-sentencecode') || ''
+        if (patterns.some(p => p.test(code))) {
+          const v = getValueNear(label)
+          if (v) return v
+        }
+      }
+      return null
+    }
+
+    function findByTextLabel(labelPatterns: RegExp[]): string | null {
+      const all = Array.from(document.querySelectorAll('td, th, span, label, div'))
+      for (const el of all) {
+        const text = normalize(el.textContent || '')
+        if (text.length > 80) continue // skip paragraphs
+        if (labelPatterns.some(p => p.test(text))) {
+          const v = getValueNear(el)
+          if (v && v !== text) return v
+        }
+      }
+      return null
+    }
+
+    // Try selectors for common ID-based inputs (readonly display fields)
+    function findById(ids: string[]): string | null {
+      for (const id of ids) {
+        const el = document.getElementById(id)
+        if (!el) continue
+        const input = el as HTMLInputElement
+        const v = normalize(input.value || el.textContent || '')
+        if (v) return v
+      }
+      return null
+    }
+
+    const entidad = findBySentenceCode([/EntityName/i, /lblEntityLabel/i, /\.Entity\b/])
+      || findById(['txtEntityName', 'spnEntidad', 'lblEntidad'])
+      || findByTextLabel([/^Entidad( estatal)?$/i, /^Nombre de la entidad$/i])
+
+    const nit_entidad = findBySentenceCode([/NIT|Nit|TaxIdentification/i])
+      || findByTextLabel([/^NIT$/i])
+
+    const referencia = findBySentenceCode([/ProcessReference|lblReference|txtReference/i])
+      || findById(['txtProcessReference', 'spnProcessReference'])
+      || findByTextLabel([/^Referencia( del proceso)?$/i, /^N[úu]mero del proceso$/i])
+
+    const objeto = findBySentenceCode([/ProcureObject|lblObjectLabel|txtObject\b/i])
+      || findById(['txtObjectContractsLabel', 'spnObjectContractsLabel', 'txtObjeto'])
+      || findByTextLabel([/^Objeto( del contrato)?$/i, /^Nombre del procedimiento$/i, /^T[íi]tulo$/i])
+
+    const descripcion = findBySentenceCode([/Description|lblDescription/i])
+      || findByTextLabel([/^Descripci[óo]n( del procedimiento)?$/i])
+
+    const modalidad = findBySentenceCode([/ContractType|ProcurementMethod/i])
+      || findByTextLabel([/^Modalidad( de contrataci[óo]n)?$/i, /^Tipo de proceso$/i])
+
+    const tipo_contrato = findBySentenceCode([/TypeOfContract|ContractCategory/i])
+      || findByTextLabel([/^Tipo de contrato$/i])
+
+    const precio_base = findBySentenceCode([/EstimatedValue|BaseAmount|BasePrice/i])
+      || findById(['txtEstimatedValue', 'spnEstimatedValue', 'txtPrecioBase'])
+      || findByTextLabel([/^Valor( estimado| total)?( del contrato)?$/i, /^Precio base$/i, /^Cuant[íi]a$/i])
+
+    const fase = findBySentenceCode([/CurrentPhase|lblPhase|CurrentStep/i])
+      || findByTextLabel([/^Fase( actual)?$/i])
+
+    const estado = findBySentenceCode([/CurrentState|lblStatus|ProcedureState/i])
+      || findByTextLabel([/^Estado( actual)?$/i])
+
+    const duracion = findBySentenceCode([/Duration\b|lblDuration/i])
+      || findByTextLabel([/^Duraci[óo]n( del contrato)?$/i])
+
+    const unidad_duracion = findBySentenceCode([/DurationUnit/i])
+      || findByTextLabel([/^Unidad de duraci[óo]n$/i])
+
+    return {
+      entidad,
+      nit_entidad,
+      referencia,
+      objeto,
+      descripcion,
+      modalidad,
+      tipo_contrato,
+      precio_base,
+      fase,
+      estado,
+      duracion,
+      unidad_duracion,
+    }
+  })
 }
 
 /**

@@ -1,4 +1,5 @@
 import { existsSync } from 'fs'
+import cron from 'node-cron'
 import { admin } from './db.js'
 import { config } from './config.js'
 import { loginAccount } from './login.js'
@@ -17,15 +18,52 @@ import { runPrecontractualMonitorCycle, monitorOneNow } from './precontractual/m
  *
  * Usage:
  *   npx tsx src/index.ts          # Run once
- *   npx tsx src/index.ts --loop   # Run continuously every MONITOR_INTERVAL_MS
+ *   npx tsx src/index.ts --loop   # Run continuously on cron schedule
+ *
+ * Loop mode schedules (Colombia TZ, UTC-5):
+ *   • 5 full cycles/día via node-cron: 06:00, 12:00, 17:00, 22:00, 03:00
+ *   • Polling cada 30s para sync requests + bootstrap de procesos nuevos
+ *   • Un ciclo de arranque al iniciar el servicio
  */
+
+const COLOMBIA_TZ = 'America/Bogota'
+const CRON_SCHEDULES: { cron: string; label: string }[] = [
+  { cron: '0 6 * * *',  label: '06:00 AM' },
+  { cron: '0 12 * * *', label: '12:00 PM' },
+  { cron: '0 17 * * *', label: '05:00 PM' },
+  { cron: '0 22 * * *', label: '10:00 PM' },
+  { cron: '0 3 * * *',  label: '03:00 AM' },
+]
+
+// Flag para evitar que un schedule pise un ciclo en curso
+let cycleRunning = false
+
+async function tryRunFullCycle(trigger: string): Promise<void> {
+  if (cycleRunning) {
+    console.log(`[Worker] ${trigger} skipped: cycle already running`)
+    return
+  }
+  cycleRunning = true
+  const start = Date.now()
+  console.log(`\n╔══ ${trigger} ══════════════════════╗`)
+  try {
+    await runFullCycle()
+  } catch (err) {
+    console.error('[Worker] Cycle failed:', err instanceof Error ? err.message : err)
+  } finally {
+    cycleRunning = false
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+    console.log(`╚══ Cycle done in ${elapsed}s ══════╝\n`)
+  }
+}
+
 async function main() {
   const loop = process.argv.includes('--loop')
 
   console.log('╔══════════════════════════════════════╗')
   console.log('║  LiciTrack SECOP Worker              ║')
   console.log('╚══════════════════════════════════════╝')
-  console.log(`Mode: ${loop ? 'continuous' : 'single run'}`)
+  console.log(`Mode: ${loop ? 'continuous (cron)' : 'single run'}`)
 
   // Check Playwright browsers are available
   if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
@@ -40,38 +78,54 @@ async function main() {
   }
   console.log()
 
-  do {
-    const startTime = Date.now()
+  if (!loop) {
+    // Single run mode (testing / manual trigger)
+    await tryRunFullCycle('single run')
+    return
+  }
 
-    try {
-      await runFullCycle()
-    } catch (err) {
-      console.error('[Worker] Cycle failed:', err instanceof Error ? err.message : err)
-    }
+  // Loop mode: register cron schedules + startup cycle + polling loop
+  console.log('[Worker] Registering cron schedules (timezone: America/Bogota)')
+  for (const s of CRON_SCHEDULES) {
+    cron.schedule(s.cron, () => {
+      void tryRunFullCycle(`scheduled ${s.label}`)
+    }, { timezone: COLOMBIA_TZ })
+    console.log(`  • ${s.cron} → ${s.label}`)
+  }
+  console.log()
 
-    if (loop) {
-      const elapsed = Date.now() - startTime
-      const waitMs = Math.max(0, config.monitorIntervalMs - elapsed)
-      console.log(`\n[Worker] Next cycle in ${Math.round(waitMs / 60_000)} minutes...`)
+  // Run once on startup so we don't wait hours for the first scheduled tick
+  void tryRunFullCycle('startup')
 
-      // While waiting, check for sync requests every 30s
-      const waitStart = Date.now()
-      while (Date.now() - waitStart < waitMs) {
-        await new Promise(r => setTimeout(r, 30_000))
-        try {
-          await processPendingSyncs()
-        } catch (err) {
-          console.error('[Worker] Sync check failed:', err instanceof Error ? err.message : err)
-        }
-        try {
-          await bootstrapNewPrecontractual()
-        } catch (err) {
-          console.error('[Worker] Precontractual bootstrap check failed:',
-            err instanceof Error ? err.message : err)
-        }
+  // Polling loop for sync requests + bootstrap (independent of main cycles)
+  startPollingLoop()
+
+  // Keep process alive forever — cron will dispatch cycles; polling dispatches fast tasks
+  await new Promise<void>(() => {})
+}
+
+function startPollingLoop() {
+  const POLL_INTERVAL_MS = 30_000
+  console.log(`[Worker] Polling loop every ${POLL_INTERVAL_MS / 1000}s for sync + bootstrap`)
+
+  setInterval(() => {
+    // Don't compete with a full cycle
+    if (cycleRunning) return
+
+    void (async () => {
+      try {
+        await processPendingSyncs()
+      } catch (err) {
+        console.error('[Poll] Sync check failed:', err instanceof Error ? err.message : err)
       }
-    }
-  } while (loop)
+      try {
+        await bootstrapNewPrecontractual()
+      } catch (err) {
+        console.error('[Poll] Precontractual bootstrap failed:',
+          err instanceof Error ? err.message : err)
+      }
+    })()
+  }, POLL_INTERVAL_MS)
 }
 
 async function runFullCycle() {

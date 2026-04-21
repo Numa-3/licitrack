@@ -69,11 +69,44 @@ export async function POST(request: Request) {
     )
   }
 
+  // Scraper-first fallback: si la API pública no tiene el proceso aún,
+  // lo insertamos igual con api_pending=true. El worker en su próximo
+  // polling (≤30s) lo bootstrappea vía captcha y trae los datos básicos
+  // + cronograma. Cada ciclo de monitoreo reintenta la API para enriquecer.
   if (records.length === 0) {
-    return Response.json(
-      { error: `No se encontró el proceso ${noticeUid} en SECOP II. Verifica que el link sea correcto.` },
-      { status: 404 },
-    )
+    const { data: inserted, error } = await supabase
+      .from('secop_processes')
+      .insert({
+        secop_process_id: noticeUid, // usa el propio NTC hasta que API lo enriquezca
+        notice_uid: noticeUid,
+        entidad: 'Pendiente primer scrape',
+        objeto: `Proceso ${noticeUid} — enriqueciendo…`,
+        url_publica: `https://community.secop.gov.co/Public/Tendering/OpportunityDetail/Index?noticeUID=${noticeUid}&isFromPublicArea=True&isModal=False`,
+        dataset_hash: '',
+        source: 'manual',
+        radar_state: 'followed',
+        monitoring_enabled: true,
+        tipo_proceso: 'precontractual',
+        api_pending: true,
+      })
+      .select('id, notice_uid, entidad, objeto, api_pending')
+      .single()
+
+    if (error) {
+      if (error.code === '23505') {
+        return Response.json({ error: 'Proceso ya existe en el sistema' }, { status: 409 })
+      }
+      return Response.json({ error: error.message }, { status: 500 })
+    }
+
+    return Response.json({
+      id: inserted.id,
+      notice_uid: noticeUid,
+      message: 'Proceso agregado. Aún no está indexado en la API pública — el worker lo enriquecerá vía captcha en los próximos minutos.',
+      process: inserted,
+      phases_count: 0,
+      api_pending: true,
+    }, { status: 201 })
   }
 
   const summary = summarizeProcess(noticeUid, records)!

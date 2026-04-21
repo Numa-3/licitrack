@@ -23,6 +23,7 @@ export type Process = {
   last_monitored_at: string | null
   next_deadline: string | null
   next_deadline_label: string | null
+  api_pending?: boolean
   secop_accounts?: { name: string } | null
 }
 

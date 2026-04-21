@@ -1,7 +1,7 @@
 # LiciTrack — Backlog
 
 Fuente única de verdad para todo lo pendiente: mejoras a lo existente y features nuevas.
-Última actualización: 2026-04-18
+Última actualización: 2026-04-21
 
 ---
 
@@ -15,6 +15,7 @@ Ajustes y pulido sobre lo que ya está construido.
 |---|--------|--------|
 | 16 | Rediseñar calendario SECOP: 1 marcador por contrato por día, solo próximo deadline futuro, click abre cronograma completo, filtros por tipo de evento, cambios solo pasados/presentes (nunca futuro) | Calendario SECOP |
 | 17 | Worker: detectar sesión expirada ANTES de discovery (hoy pierde 1 ciclo cuando cookies caducan justo antes de scrape — página de 9807 bytes → 0 contracts → re-loguea al ciclo siguiente). Fix: hacer HEAD request liviano pre-scrape o refrescar cookies proactivamente | Worker SECOP |
+| 18 | Bootstrap contractual: al marcar `monitoring_enabled=true` en un contrato, capturar primer snapshot en ~1min en vez de esperar ciclo completo (hoy solo precontractual tiene bootstrap). Diseño: [docs/design/bootstrap-contractual.md](design/bootstrap-contractual.md) | Worker SECOP |
 
 ### Media prioridad
 
@@ -62,6 +63,26 @@ Funcionalidades que no existen todavía.
   - Worker hoy no expone HTTP — mejor opción: escribir heartbeat a nueva tabla `worker_heartbeat` cada X segundos (no requiere cambios de firewall)
   - Nueva tabla `system_health_log` con eventos + timestamp, retención 30 días
 - **Relación**: complementa (no reemplaza) el Centro de Notificaciones In-App. Notificaciones = cambios en contratos/procesos/pólizas. Monitoreo = salud del sistema en sí
+
+#### Métricas operativas de mecanismos internos del worker (add-on al Centro de monitoreo)
+- **Add-on específico** al `/admin/monitoreo`: mientras la idea anterior cubre servicios externos (Supabase, OpenRouter, CapSolver, API SECOP), esta cubre los **engranajes internos** del worker que corren en paralelo (bootstrap, polling, node-cron, discovery, diff engine)
+- **Qué monitorear**:
+  - **Bootstrap queue**: último bootstrap ejecutado (ts + NTC), cola pendiente (`api_pending=true` count), tiempo promedio, últimos 10 con status/razón, alerta si pendientes >30min
+  - **Polling loop**: último latido, iteraciones en 24h (~480 con intervalo 3min), alerta crítica si dejó de latir >10min
+  - **Monitoreo node-cron (5 ciclos/día)**: próximo ciclo programado (countdown), último ciclo (ts + duración + procesos revisados + cambios detectados), historial últimos 5, alerta si un ciclo programado no se ejecutó
+  - **Discovery de cuentas**: última corrida por cuenta, entidades nuevas vs conocidas, cuentas con fallos repetidos
+  - **Captcha solver**: tasa éxito/fallo últimas 24h, tiempo promedio de respuesta, créditos disponibles, alerta si tasa fallo >20%
+  - **Diff engine**: cambios detectados hoy (total + por tipo), snapshots corruptos/vacíos, snapshots por source_type
+- **Vista tipo "health check"** arriba del panel con semáforos grandes por componente: 🟢 Bootstrap operativo (hace 2min), 🟡 Captcha degradado (fallo 15%), etc.
+- **Por qué**: hoy si el bootstrap se cae silenciosamente el usuario pega links que nunca aparecen → frustración → investigación manual. Con esto: en el panel se ve de inmediato cuál mecanismo falló → hipótesis rápida → fix en minutos. Patrón profesional: cada "engranaje" reporta su propio heartbeat
+- **Consideraciones técnicas**:
+  - Tabla `worker_heartbeats` (componente, timestamp, status, metadata_json)
+  - Cada mecanismo escribe heartbeat en su inicio y cierre
+  - Panel compara timestamps contra umbrales esperados
+  - Frontend: card por componente con línea temporal de últimos 10 latidos
+  - Retención: 7 días detallados, luego agregados diarios
+- **Relación**: NO reemplaza el Centro de monitoreo general — ambas ideas deberían ejecutarse juntas en el build de `/admin/monitoreo`. Esta es la capa "observabilidad interna del worker"
+- Origen: sesión del 2026-04-21 definiendo scraper-first fallback para precontractual; al tener bootstrap + polling + node-cron corriendo en paralelo, si alguno falla silenciosamente no nos enteramos
 
 #### Consola de administrador (`/admin`)
 - Hard delete global (reset completo con confirmación "CONFIRMAR")
