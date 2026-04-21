@@ -212,109 +212,43 @@ function normalizeText(s: string): string {
 function extractBasicInfoFromHtml(html: string): BasicProcessInfo {
   const $ = cheerio.load(html)
 
-  const getValueNear = (labelEl: ReturnType<typeof $>): string | null => {
-    const labelText = normalizeText(labelEl.text())
-    const labelTd = labelEl.closest('td')
-    if (labelTd.length > 0) {
-      let next = labelTd.next()
-      while (next.length > 0 && !normalizeText(next.text())) next = next.next()
-      const t = normalizeText(next.text())
-      if (t) return t
-    }
-    const row = labelEl.closest('tr')
-    if (row.length > 0) {
-      const cells = row.find('td').toArray()
-      for (let i = cells.length - 1; i >= 0; i--) {
-        const t = normalizeText($(cells[i]).text())
-        if (t && t !== labelText) return t
-      }
-    }
-    return null
+  // Selectores basados en el HTML real capturado del popup OpportunityDetail.
+  // SECOP usa IDs específicos en forma de prefijo_row_cell_spn*. Los capturamos
+  // directamente para robustez — fallback a búsqueda por texto solo si cambia.
+
+  const byId = (id: string): string | null => {
+    const el = $(`#${id}`)
+    if (el.length === 0) return null
+    const v = normalizeText(el.text())
+    return v || null
   }
 
-  const findBySentenceCode = (patterns: RegExp[]): string | null => {
-    let found: string | null = null
-    $('[data-sentencecode]').each((_, el) => {
-      if (found) return
-      const code = $(el).attr('data-sentencecode') || ''
-      if (patterns.some(p => p.test(code))) {
-        const v = getValueNear($(el))
-        if (v) {
-          found = v
-          return false // break
-        }
-      }
-    })
-    return found
-  }
+  // Entidad: span class="CompanyFullName" dentro del contentzone del buyer
+  const entidad = normalizeText(
+    $('#fdsRequestSummaryInfo_tblDetail_trRowBuyer_tdCell1 .CompanyFullName').first().text(),
+  ) || normalizeText($('.CompanyFullName').first().text()) || null
 
-  const findByTextLabel = (labelPatterns: RegExp[]): string | null => {
-    let found: string | null = null
-    $('td, th, span, label, div').each((_, el) => {
-      if (found) return
-      const text = normalizeText($(el).text())
-      if (text.length === 0 || text.length > 80) return
-      if (labelPatterns.some(p => p.test(text))) {
-        const v = getValueNear($(el))
-        if (v && v !== text) {
-          found = v
-          return false
-        }
-      }
-    })
-    return found
-  }
+  const precio_base = byId('cbxBasePriceValue')
 
-  const findById = (ids: string[]): string | null => {
-    for (const id of ids) {
-      const el = $(`#${id}`)
-      if (el.length === 0) continue
-      const val = (el.attr('value') || el.text() || '').trim()
-      const v = normalizeText(val)
-      if (v) return v
-    }
-    return null
-  }
+  const referencia = byId('fdsRequestSummaryInfo_tblDetail_trRowRef_tdCell2_spnRequestReference')
 
-  const entidad = findBySentenceCode([/EntityName/i, /lblEntityLabel/i, /\.Entity\b/])
-    || findById(['txtEntityName', 'spnEntidad', 'lblEntidad'])
-    || findByTextLabel([/^Entidad( estatal)?$/i, /^Nombre de la entidad$/i])
+  const objeto = byId('fdsRequestSummaryInfo_tblDetail_trRowName_tdCell2_spnRequestName')
 
-  const nit_entidad = findBySentenceCode([/NIT|Nit|TaxIdentification/i])
-    || findByTextLabel([/^NIT$/i])
+  const descripcion = byId('fdsRequestSummaryInfo_tblDetail_trRowDescription_tdCell2_spnDescription')
 
-  const referencia = findBySentenceCode([/ProcessReference|lblReference|txtReference/i])
-    || findById(['txtProcessReference', 'spnProcessReference'])
-    || findByTextLabel([/^Referencia( del proceso)?$/i, /^N[úu]mero del proceso$/i])
+  const modalidad = byId('fdsRequestSummaryInfo_tblDetail_trRowProcedureType_tdCell2_spnProcedureType')
 
-  const objeto = findBySentenceCode([/ProcureObject|lblObjectLabel|txtObject\b/i])
-    || findById(['txtObjectContractsLabel', 'spnObjectContractsLabel', 'txtObjeto'])
-    || findByTextLabel([/^Objeto( del contrato)?$/i, /^Nombre del procedimiento$/i, /^T[íi]tulo$/i])
+  const tipo_contrato = byId('fdsObjectOfTheContract_tblDetail_trRowTypeOfContract_tdCell2_spnTypeOfContract')
 
-  const descripcion = findBySentenceCode([/Description|lblDescription/i])
-    || findByTextLabel([/^Descripci[óo]n( del procedimiento)?$/i])
+  const fase = byId('fdsRequestSummaryInfo_tblDetail_trRowPhase_tdCell2_spnPhase')
 
-  const modalidad = findBySentenceCode([/ContractType|ProcurementMethod/i])
-    || findByTextLabel([/^Modalidad( de contrataci[óo]n)?$/i, /^Tipo de proceso$/i])
+  const estado = byId('fdsRequestSummaryInfo_tblDetail_trRowState_tdCell2_spnState')
 
-  const tipo_contrato = findBySentenceCode([/TypeOfContract|ContractCategory/i])
-    || findByTextLabel([/^Tipo de contrato$/i])
+  const duracion = byId('fdsObjectOfTheContract_tblDetail_trRowContractDuration_tdCell2_spnContractDuration')
 
-  const precio_base = findBySentenceCode([/EstimatedValue|BaseAmount|BasePrice/i])
-    || findById(['txtEstimatedValue', 'spnEstimatedValue', 'txtPrecioBase'])
-    || findByTextLabel([/^Valor( estimado| total)?( del contrato)?$/i, /^Precio base$/i, /^Cuant[íi]a$/i])
+  const unidad_duracion = byId('fdsObjectOfTheContract_tblDetail_trRowContractDuration_tdCell2_spnContractDurationType')
 
-  const fase = findBySentenceCode([/CurrentPhase|lblPhase|CurrentStep/i])
-    || findByTextLabel([/^Fase( actual)?$/i])
-
-  const estado = findBySentenceCode([/CurrentState|lblStatus|ProcedureState/i])
-    || findByTextLabel([/^Estado( actual)?$/i])
-
-  const duracion = findBySentenceCode([/Duration\b|lblDuration/i])
-    || findByTextLabel([/^Duraci[óo]n( del contrato)?$/i])
-
-  const unidad_duracion = findBySentenceCode([/DurationUnit/i])
-    || findByTextLabel([/^Unidad de duraci[óo]n$/i])
+  const nit_entidad = null // No aparece directamente en el popup; viene del API
 
   return {
     entidad,
@@ -333,60 +267,53 @@ function extractBasicInfoFromHtml(html: string): BasicProcessInfo {
 }
 
 /**
- * Pull the cronograma table from the loaded HTML.
+ * Pull the cronograma from the loaded HTML.
  *
- * Strategy: look for any table whose header row mentions schedule-like
- * keywords (fecha, inicio, fin, estado, hito, etapa), then extract rows.
+ * Estructura real del popup SECOP (capturada 2026-04-21):
+ *   <tr id="trScheduleDateRow_N">
+ *     <td class="Label"><label id="lblScheduleDateTimeLabel_N">Nombre del evento</label></td>
+ *     <td class="Field">
+ *       <div id="dtmbScheduleDateTime_N" class="VortalDateBox">
+ *         <span id="dtmbScheduleDateTime_N_txt">4 días de tiempo transcurrido
+ *           <font class="DateTimeDetail">(17/04/2026 10:00:00 AM(UTC-05:00) Bogotá, Lima, Quito)</font>
+ *         </span>
+ *       </div>
+ *     </td>
+ *   </tr>
+ *
+ * Las filas con eventos reales NO tienen style="display:none".
  */
 function extractCronogramaFromHtml(html: string): CronogramaEvento[] {
   const $ = cheerio.load(html)
   const results: CronogramaEvento[] = []
 
-  const tables = $('table').toArray()
-  for (const table of tables) {
-    const $table = $(table)
-    const headerCells = $table.find('thead th, tr:first-child th, tr:first-child td').toArray()
-    const headers = headerCells
-      .map(h => normalizeText($(h).text()).toLowerCase())
-      .filter(Boolean)
+  const rows = $('tr[id^="trScheduleDateRow_"]').toArray()
+  for (const row of rows) {
+    const $row = $(row)
 
-    if (headers.length < 2) continue
+    // Skip hidden rows
+    const style = $row.attr('style') || ''
+    if (/display\s*:\s*none/i.test(style)) continue
 
-    const hasScheduleKeywords = headers.some(h =>
-      /(fecha\s+inicio|fecha\s+fin|hito|etapa|cronograma|scheduled|plazo)/i.test(h),
-    )
-    if (!hasScheduleKeywords) continue
+    const label = normalizeText($row.find('label[id^="lblScheduleDateTimeLabel_"]').first().text())
+    if (!label) continue
 
-    const nameIdx = headers.findIndex(h => /(nombre|hito|etapa|descripci|actividad)/i.test(h))
-    const startIdx = headers.findIndex(h => /(inicio|desde|start)/i.test(h))
-    const endIdx = headers.findIndex(h => /(fin|hasta|end|vencim)/i.test(h))
-    const stateIdx = headers.findIndex(h => /(estado|status)/i.test(h))
-
-    const rows = $table.find('tbody tr, tr').toArray()
-    for (const row of rows) {
-      const $row = $(row)
-      const cells = $row.find('td').toArray().map(c => {
-        const $c = $(c).clone()
-        $c.find('.DateTimeDetail, font.DateTimeDetail').remove()
-        return normalizeText($c.text())
-      })
-      if (cells.length === 0) continue
-
-      // Skip header-like rows
-      if (cells.length === headers.length && cells.every(c => /^(fecha|hito|etapa|estado|nombre|inicio|fin)/i.test(c))) continue
-
-      const nombre = nameIdx >= 0 ? cells[nameIdx] : cells[0]
-      if (!nombre || nombre.length < 3) continue
-
-      results.push({
-        nombre,
-        fecha_inicio: startIdx >= 0 ? cells[startIdx] || null : null,
-        fecha_fin: endIdx >= 0 ? cells[endIdx] || null : null,
-        estado: stateIdx >= 0 ? cells[stateIdx] || null : null,
-      })
+    // Extraer la fecha/hora dentro de <font class="DateTimeDetail">(...)</font>
+    const detailText = normalizeText($row.find('font.DateTimeDetail').first().text())
+    // Típico: "(17/04/2026 10:00:00 AM(UTC-05:00) Bogotá, Lima, Quito)"
+    // Sacamos la primera parte antes del segundo paréntesis (UTC...)
+    let fecha: string | null = null
+    if (detailText) {
+      const m = detailText.match(/\(?\s*([\d\/]+\s+[\d:]+\s*[AP]M)/i)
+      if (m) fecha = m[1]
     }
 
-    if (results.length > 0) break
+    results.push({
+      nombre: label,
+      fecha_inicio: fecha,
+      fecha_fin: fecha, // Un solo campo de fecha en este formato — lo duplicamos
+      estado: null,
+    })
   }
 
   return results
