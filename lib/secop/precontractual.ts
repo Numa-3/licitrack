@@ -47,16 +47,23 @@ export function extractNoticeUid(input: string): string | null {
   return match ? match[1].toUpperCase() : null
 }
 
-async function queryApi(whereClause: string, limit = 50): Promise<ApiRecord[]> {
+async function queryApi(whereClause: string, limit = 50, timeoutMs = 8_000): Promise<ApiRecord[]> {
   const url = `${BASE_URL}?$where=${encodeURIComponent(whereClause)}&$limit=${limit}`
-  const res = await fetch(url, {
-    headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-    cache: 'no-store',
-  })
-  if (!res.ok) {
-    throw new Error(`SECOP API returned ${res.status}`)
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+      cache: 'no-store',
+      signal: ctrl.signal,
+    })
+    if (!res.ok) {
+      throw new Error(`SECOP API returned ${res.status}`)
+    }
+    return (await res.json()) as ApiRecord[]
+  } finally {
+    clearTimeout(timer)
   }
-  return (await res.json()) as ApiRecord[]
 }
 
 /**
@@ -67,14 +74,29 @@ export async function fetchProcessPhases(noticeUid: string): Promise<ApiRecord[]
   if (!/^CO1\.NTC\.\d+$/.test(noticeUid)) {
     throw new Error(`Formato inválido de noticeUID: ${noticeUid}`)
   }
-  // Primary lookup: noticeUID embedded in urlproceso.url
-  let initial = await queryApi(`urlproceso.url like '%${noticeUid}%'`, 5)
+  const numericPart = noticeUid.replace(/^CO1\.NTC\./, '')
 
-  // Fallback: procesos re-noticeados tienen urlproceso.url apuntando al NTC
-  // viejo. SECOP comparte contador numérico entre NTC y REQ del mismo proceso.
+  // Strategy: query rápida primero (igualdad directa por id_del_proceso)
+  // La query LIKE en urlproceso.url hace full scan en Socrata — llega a tardar
+  // 20-30s y excede el timeout de 10s de Vercel. En cambio id_del_proceso tiene
+  // índice y resuelve en <1s. SECOP usa el mismo contador numérico para NTC y
+  // REQ, así que en ~99% de casos esta query alcanza.
+  let initial = await queryApi(`id_del_proceso='CO1.REQ.${numericPart}'`, 5, 6_000)
+
+  // Fallback: si el id_del_proceso tiene otro prefijo (raro pero posible),
+  // probamos la query más lenta por URL. Si esta también falla por timeout,
+  // el caller captura la excepción y trata el proceso como "no indexado aún".
   if (initial.length === 0) {
-    const numericPart = noticeUid.replace(/^CO1\.NTC\./, '')
-    initial = await queryApi(`id_del_proceso='CO1.REQ.${numericPart}'`, 5)
+    try {
+      initial = await queryApi(`urlproceso.url like '%${noticeUid}%'`, 5, 8_000)
+    } catch (err) {
+      // Timeout/abort en la query lenta — devolver vacío para que el caller
+      // haga scraper-first en vez de 502.
+      if (err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message))) {
+        return []
+      }
+      throw err
+    }
   }
 
   if (initial.length === 0) return []

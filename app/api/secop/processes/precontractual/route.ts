@@ -58,21 +58,23 @@ export async function POST(request: Request) {
     })
   }
 
-  // Fetch from public SECOP II API
-  let records
+  // Fetch from public SECOP II API. Si falla por red/timeout/500, también
+  // caemos al flujo scraper-first — el worker tiene mejor conectividad al
+  // dataset y además puede scrapear el popup. No queremos que una falla
+  // temporal de Vercel → datos.gov.co bloquee al usuario.
+  let records: Awaited<ReturnType<typeof fetchProcessPhases>> = []
   try {
     records = await fetchProcessPhases(noticeUid)
   } catch (err) {
-    return Response.json(
-      { error: `Error consultando SECOP: ${err instanceof Error ? err.message : 'desconocido'}` },
-      { status: 502 },
-    )
+    console.warn(`[precontractual] API fetch falló para ${noticeUid}, procediendo con scraper-first:`,
+      err instanceof Error ? err.message : err)
+    // records = [] → flujo scraper-first abajo
   }
 
   // Scraper-first fallback: si la API pública no tiene el proceso aún,
-  // lo insertamos igual con api_pending=true. El worker en su próximo
-  // polling (≤30s) lo bootstrappea vía captcha y trae los datos básicos
-  // + cronograma. Cada ciclo de monitoreo reintenta la API para enriquecer.
+  // o si la consulta falló, lo insertamos igual con api_pending=true.
+  // El worker en su próximo polling (≤30s) lo bootstrappea vía captcha y trae
+  // los datos básicos + cronograma. Cada ciclo de monitoreo reintenta la API.
   if (records.length === 0) {
     const { data: inserted, error } = await supabase
       .from('secop_processes')

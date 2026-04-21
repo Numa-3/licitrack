@@ -130,17 +130,18 @@ export async function fetchProcessPhases(noticeUid: string): Promise<ApiRecord[]
   if (!/^CO1\.NTC\.\d+$/.test(noticeUid)) {
     throw new Error(`Invalid noticeUID format: ${noticeUid}`)
   }
+  const numericPart = noticeUid.replace(/^CO1\.NTC\./, '')
 
-  // Primary lookup: noticeUID embedded in urlproceso.url
-  let initial = await queryApi(`urlproceso.url like '%${noticeUid}%'`, 5)
+  // Query rápida por id_del_proceso (igualdad directa, usa índice → <1s).
+  // SECOP comparte el contador numérico entre NTC y REQ del mismo proceso,
+  // así que en ~99% de casos esta query alcanza. Muy superior a la query
+  // LIKE en urlproceso.url que hace full scan (20-30s y timeout a veces).
+  let initial = await queryApi(`id_del_proceso='CO1.REQ.${numericPart}'`, 5)
 
-  // Fallback: algunos procesos re-noticeados (con NTC nuevo) tienen su
-  // urlproceso.url apuntando al NTC viejo. SECOP usa el mismo contador
-  // numérico para NTC y REQ del mismo proceso, así que el sufijo numérico
-  // del NTC suele aparecer en id_del_proceso (CO1.REQ.<suffix>).
+  // Fallback lento: buscar por noticeUID embebido en urlproceso.url. Solo
+  // necesario para procesos re-noticeados donde la URL apunta a un NTC viejo.
   if (initial.length === 0) {
-    const numericPart = noticeUid.replace(/^CO1\.NTC\./, '')
-    initial = await queryApi(`id_del_proceso='CO1.REQ.${numericPart}'`, 5)
+    initial = await queryApi(`urlproceso.url like '%${noticeUid}%'`, 5)
   }
 
   if (initial.length === 0) return []
