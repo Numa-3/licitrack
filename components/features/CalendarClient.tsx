@@ -9,6 +9,7 @@ type CalendarEvent = {
   label: string
   process_id: string
   entidad: string
+  custom_name: string | null
   objeto: string
   priority: 'high' | 'medium' | 'low'
   secop_process_id: string
@@ -277,7 +278,10 @@ export default function CalendarClient({ initialEvents, initialMonth }: Props) {
                       <span className="text-[10px] text-gray-400">{e.secop_process_id}</span>
                     </div>
                     <p className="text-sm font-medium text-gray-900 mt-1">{e.label}</p>
-                    <p className="text-xs text-gray-500 mt-0.5 truncate">{e.entidad}</p>
+                    <p className="text-xs text-gray-500 mt-0.5 truncate">
+                      {e.custom_name || e.entidad}
+                      {e.custom_name && <span className="text-gray-400"> · {e.entidad}</span>}
+                    </p>
                   </div>
                 </div>
               ))}

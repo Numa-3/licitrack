@@ -110,7 +110,12 @@ export default function ChangesTimeline({ initialChanges }: { initialChanges: Ch
                           <p className="text-sm text-gray-900">{c.summary}</p>
                           {c.secop_processes && (
                             <p className="text-xs text-gray-400 mt-0.5 truncate">
-                              {c.secop_processes.entidad} — {c.secop_processes.objeto}
+                              <span className="font-medium text-gray-600">
+                                {c.secop_processes.custom_name || c.secop_processes.entidad}
+                              </span>
+                              {c.secop_processes.custom_name
+                                ? <> · {c.secop_processes.entidad}</>
+                                : <> — {c.secop_processes.objeto}</>}
                             </p>
                           )}
                         </div>

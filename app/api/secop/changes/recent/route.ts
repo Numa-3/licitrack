@@ -20,7 +20,7 @@ export async function GET(request: Request) {
     .select(`
       *,
       secop_processes!secop_process_changes_process_id_fkey (
-        secop_process_id, entidad, objeto
+        secop_process_id, entidad, custom_name, objeto
       )
     `, { count: 'exact' })
     .order('detected_at', { ascending: false })

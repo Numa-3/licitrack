@@ -41,6 +41,7 @@ export type Change = {
   secop_processes?: {
     secop_process_id: string
     entidad: string
+    custom_name?: string | null
     objeto: string
   } | null
 }
@@ -72,6 +73,7 @@ export type AccountProcess = {
   secop_process_id: string
   referencia_proceso: string | null
   entidad: string
+  custom_name: string | null
   objeto: string
   estado: string | null
   valor_estimado: number | null

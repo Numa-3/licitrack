@@ -308,6 +308,7 @@ function ContractsSection({ accountId, onRefresh }: { accountId: string; onRefre
       const q = search.toLowerCase()
       return (
         c.entidad.toLowerCase().includes(q) ||
+        (c.custom_name || '').toLowerCase().includes(q) ||
         c.objeto.toLowerCase().includes(q) ||
         (c.referencia_proceso || '').toLowerCase().includes(q) ||
         c.secop_process_id.toLowerCase().includes(q)
@@ -376,7 +377,8 @@ function ContractsSection({ accountId, onRefresh }: { accountId: string; onRefre
             </button>
 
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900">{c.entidad}</p>
+              <p className="text-sm font-medium text-gray-900">{c.custom_name || c.entidad}</p>
+              {c.custom_name && <p className="text-[10px] text-gray-400 mt-0.5 truncate">{c.entidad}</p>}
               <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{c.objeto}</p>
               <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                 {c.estado && (

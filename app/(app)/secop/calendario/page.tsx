@@ -15,7 +15,7 @@ export default async function CalendarioPage() {
   const [{ data: processes }, { data: changes }] = await Promise.all([
     supabase
       .from('secop_processes')
-      .select('id, secop_process_id, entidad, objeto, next_deadline, next_deadline_label')
+      .select('id, secop_process_id, entidad, custom_name, objeto, next_deadline, next_deadline_label')
       .eq('monitoring_enabled', true)
       .not('next_deadline', 'is', null)
       .gte('next_deadline', startOfMonth)
@@ -25,7 +25,7 @@ export default async function CalendarioPage() {
       .select(`
         id, detected_at, summary, priority,
         secop_processes!secop_process_changes_process_id_fkey (
-          id, secop_process_id, entidad, objeto
+          id, secop_process_id, entidad, custom_name, objeto
         )
       `)
       .gte('detected_at', startOfMonth)
@@ -39,6 +39,7 @@ export default async function CalendarioPage() {
     label: string
     process_id: string
     entidad: string
+    custom_name: string | null
     objeto: string
     priority: 'high' | 'medium' | 'low'
     secop_process_id: string
@@ -57,6 +58,7 @@ export default async function CalendarioPage() {
         label: p.next_deadline_label || 'Deadline',
         process_id: p.id,
         entidad: p.entidad,
+        custom_name: (p as { custom_name?: string | null }).custom_name ?? null,
         objeto: (p.objeto || '').slice(0, 80),
         priority: hoursLeft < 0 ? 'high' : hoursLeft < 48 ? 'high' : hoursLeft < 168 ? 'medium' : 'low',
         secop_process_id: p.secop_process_id,
@@ -69,12 +71,14 @@ export default async function CalendarioPage() {
       const raw = c.secop_processes
       const proc = Array.isArray(raw) ? raw[0] : raw
       if (!proc) continue
+      const procWithName = proc as typeof proc & { custom_name?: string | null }
       events.push({
         date: new Date(c.detected_at).toISOString().slice(0, 10),
         type: 'change',
         label: c.summary,
         process_id: proc.id,
         entidad: proc.entidad,
+        custom_name: procWithName.custom_name ?? null,
         objeto: (proc.objeto || '').slice(0, 80),
         priority: c.priority as 'high' | 'medium' | 'low',
         secop_process_id: proc.secop_process_id,

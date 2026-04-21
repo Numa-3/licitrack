@@ -17,6 +17,7 @@ type Notification = {
   secop_processes?: {
     secop_process_id: string
     entidad: string
+    custom_name?: string | null
     objeto: string
   } | null
 }
@@ -204,7 +205,10 @@ export default function NotificationPanel({ open, onClose, onCountChange }: Prop
                             <p className="text-xs text-gray-500 mt-0.5">{n.body}</p>
                             {n.secop_processes && (
                               <p className="text-[10px] text-gray-400 mt-1 truncate">
-                                {n.secop_processes.entidad}
+                                <span className="font-medium text-gray-500">
+                                  {n.secop_processes.custom_name || n.secop_processes.entidad}
+                                </span>
+                                {n.secop_processes.custom_name && <> · {n.secop_processes.entidad}</>}
                               </p>
                             )}
                           </div>

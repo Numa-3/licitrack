@@ -22,7 +22,7 @@ export async function GET(request: Request) {
     .from('notifications')
     .select(`
       *,
-      secop_processes (secop_process_id, entidad, objeto)
+      secop_processes (secop_process_id, entidad, custom_name, objeto)
     `, { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
