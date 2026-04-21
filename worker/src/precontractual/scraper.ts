@@ -76,7 +76,22 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
   console.log(`[OpportunityScraper] Starting ${noticeUid}`)
 
   const browser = await chromium.launch({ headless: true })
-  const context = await browser.newContext({ userAgent: USER_AGENT })
+  const context = await browser.newContext({
+    userAgent: USER_AGENT,
+    locale: 'es-CO',
+    extraHTTPHeaders: {
+      'Accept-Language': 'es-CO,es;q=0.9,en;q=0.5',
+    },
+  })
+  // Cookie de idioma que usa el panel de SECOP — si no está, devuelve en inglés
+  await context.addCookies([
+    {
+      name: 'CurrentLanguage',
+      value: 'es-CO',
+      domain: 'community.secop.gov.co',
+      path: '/',
+    },
+  ])
   const page = await context.newPage()
 
   try {
