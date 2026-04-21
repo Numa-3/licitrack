@@ -39,8 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-.aidesigner/*
-!.aidesigner/.gitkeep
 
 # Local IDE / AI tooling
 .agents/
@@ -49,6 +47,3 @@ next-env.d.ts
 
 # Worker build output
 worker/.next/
-
-# AIDesigner local artifacts
-.aidesigner/

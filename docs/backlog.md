@@ -16,6 +16,7 @@ Ajustes y pulido sobre lo que ya está construido.
 | 16 | Rediseñar calendario SECOP: 1 marcador por contrato por día, solo próximo deadline futuro, click abre cronograma completo, filtros por tipo de evento, cambios solo pasados/presentes (nunca futuro) | Calendario SECOP |
 | 17 | Worker: detectar sesión expirada ANTES de discovery (hoy pierde 1 ciclo cuando cookies caducan justo antes de scrape — página de 9807 bytes → 0 contracts → re-loguea al ciclo siguiente). Fix: hacer HEAD request liviano pre-scrape o refrescar cookies proactivamente | Worker SECOP |
 | 18 | Bootstrap contractual: al marcar `monitoring_enabled=true` en un contrato, capturar primer snapshot en ~1min en vez de esperar ciclo completo (hoy solo precontractual tiene bootstrap). Diseño: [docs/design/bootstrap-contractual.md](design/bootstrap-contractual.md) | Worker SECOP |
+| 19 | Rearquitectura scraping en 4 capas para reducir mantenimiento de 4-10h/mes a 0.5-2h/mes. **Capa 1**: datos.gov.co como fuente primaria (70-80% de campos sin scraping). **Capa 2**: Playwright navega + Claude Sonnet 4.6 extrae con schema (reemplaza 277 líneas de selectores cheerio en `parsers/contract-detail.ts`). **Capa 3**: validación Zod + golden set de 5-10 HTMLs reales en `worker/tests/fixtures/`. **Capa 4**: healthcheck + alertas (>30% campos null, worker sin correr >2h, validación falla, costo LLM excede umbral) + tabla `scrape_runs`. Costo: ~$15-30/año. Esfuerzo: 4-6 días. Riesgos: no determinismo LLM (mitigado con Zod), dependencia de proveedor (mitigar con modelo fallback), costo runaway (alerta diaria). Arranque sugerido: validar Capa 1 aislada antes de comprometerse al plan completo | Worker SECOP |
 
 ### Media prioridad
 
@@ -186,6 +187,26 @@ Funcionalidades que no existen todavía.
 - Resumen diario automático al grupo: "Hoy: 3 cambios, 2 deadlines esta semana"
 
 ### Media prioridad
+
+#### Rediseño completo de frontend con Claude Design
+- Rediseñar UI/UX de LiciTrack pantalla por pantalla usando Claude Design (producto oficial de Anthropic lanzado 2026-04-17, powered by Opus 4.7)
+- **Qué hace**: generar mockups con Claude Design leyendo el codebase + `DESIGN.md` como contexto, iterar en conversación/sliders, luego portar a React/Tailwind preservando lógica existente
+- **Por qué**: frontend actual es funcional pero "mediocre" — prioridad hasta ahora fue cerrar features, UX quedó en segundo plano. Con flujos críticos ya estables, toca salto visual
+- **Orden de rediseño**:
+  1. Dashboard (`/dashboard`) — primera pantalla, debe dar visión ejecutiva
+  2. Seguimiento SECOP (`/secop/seguimiento`) — tabla principal de uso diario
+  3. Panel de detalle del proceso (sidebar derecho)
+  4. Calendario (`/secop/calendario`) — actualmente básico, puede ser mucho más visual
+  5. Contratos (`/contratos`) — tabla con filtros
+  6. Notificaciones (campana) — panel lateral, puede agrupar por día + preview
+- **Qué NO cambiar**: navegación (sidebar fija + estructura de rutas funciona bien), sistema de permisos jefe/operadora, API routes y lógica de negocio (puro frontend)
+- **Decisión**: NO usar más AIDesigner MCP — se retira del `.mcp.json`. Claude Design es el oficial, misma modelo, integración más limpia, exporta a PDF/URL/PPTX/Canva
+- **Consideración crítica**: 80% del esfuerzo está en implementación, no en mockup. Cada pantalla = 2-4h reales (preservar loading states, errores, paginación, permisos, optimistic updates). Proyecto de 2-3 sprints dedicados
+- **Prerequisito para arrancar**:
+  - Telegram notifications funcionando
+  - Centro de monitoreo `/admin/monitoreo` construido
+  - Precontractual tracker probado con múltiples casos reales
+- **Workflow cuando arranquemos**: actualizar `DESIGN.md` con dirección clara → mockup por pantalla en Claude Design → iterar → exportar URL de referencia → portar a React/Tailwind
 
 #### Fase 4: Radar de Procesos (`/secop/radar`)
 - Vista visual de todos los procesos monitoreados

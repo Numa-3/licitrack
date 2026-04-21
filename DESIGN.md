@@ -1,6 +1,6 @@
 # LiciTrack — Design System
 
-> Este archivo es leído automáticamente por AIDesigner en cada generación.
+> Este archivo se pasa como contexto a Claude Design al generar mockups.
 > Mantenerlo actualizado garantiza consistencia visual entre todas las páginas.
 
 ---
@@ -140,7 +140,7 @@ text-sm: span gray-500 + ph-caret-right gray-400 text-[10px] + span font-medium 
 ## Iconos
 
 - Proyecto usa **Lucide React** (ya instalado)
-- En mockups AIDesigner usa Phosphor Icons — al implementar, mapear al equivalente Lucide
+- Si un mockup de Claude Design sugiere otra librería de íconos, mapear siempre al equivalente Lucide
 - Tamaño estándar: `size={16}` en sidebar, `size={15}` en cards
 
 ---
