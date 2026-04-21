@@ -154,10 +154,16 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
  */
 async function extractBasicInfo(page: Page): Promise<BasicProcessInfo> {
   return await page.evaluate(() => {
+    // NOTA: todas las funciones aquí están declaradas como `const arrow = () => {}`
+    // a propósito. `function foo() {}` declarations son transformadas por tsx con
+    // el helper __name() que no existe en el browser context → ReferenceError.
+
+    const normalize = (s: string): string => s.replace(/\s+/g, ' ').trim()
+
     // Find the value cell associated with a label element.
     // Label and value are typically sibling <td> inside the same <tr>,
     // or the value is in the NEXT sibling td of the label's parent td.
-    function getValueNear(labelEl: Element): string | null {
+    const getValueNear = (labelEl: Element): string | null => {
       // Strategy A: next sibling of the label's closest <td>
       const labelTd = labelEl.closest('td')
       if (labelTd) {
@@ -177,11 +183,7 @@ async function extractBasicInfo(page: Page): Promise<BasicProcessInfo> {
       return null
     }
 
-    function normalize(s: string): string {
-      return s.replace(/\s+/g, ' ').trim()
-    }
-
-    function findBySentenceCode(patterns: RegExp[]): string | null {
+    const findBySentenceCode = (patterns: RegExp[]): string | null => {
       const labels = Array.from(document.querySelectorAll('[data-sentencecode]'))
       for (const label of labels) {
         const code = label.getAttribute('data-sentencecode') || ''
@@ -193,7 +195,7 @@ async function extractBasicInfo(page: Page): Promise<BasicProcessInfo> {
       return null
     }
 
-    function findByTextLabel(labelPatterns: RegExp[]): string | null {
+    const findByTextLabel = (labelPatterns: RegExp[]): string | null => {
       const all = Array.from(document.querySelectorAll('td, th, span, label, div'))
       for (const el of all) {
         const text = normalize(el.textContent || '')
@@ -207,7 +209,7 @@ async function extractBasicInfo(page: Page): Promise<BasicProcessInfo> {
     }
 
     // Try selectors for common ID-based inputs (readonly display fields)
-    function findById(ids: string[]): string | null {
+    const findById = (ids: string[]): string | null => {
       for (const id of ids) {
         const el = document.getElementById(id)
         if (!el) continue
