@@ -13,6 +13,7 @@
  * Regular polling uses the free public API (fetcher.ts) to avoid captcha cost.
  */
 import { chromium, type Page } from 'playwright'
+import * as cheerio from 'cheerio'
 import { config, USER_AGENT } from '../config.js'
 import { solveCaptcha, injectCaptchaToken } from '../captcha.js'
 
@@ -119,10 +120,12 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
     await page.waitForTimeout(2_000)
 
     const html = await page.content()
-    const [cronograma, basicInfo] = await Promise.all([
-      extractCronograma(page),
-      extractBasicInfo(page),
-    ])
+    // Extraer con cheerio en vez de page.evaluate() para evitar el problema
+    // de `__name is not defined` — tsx/esbuild con keepNames transforma tanto
+    // function declarations como const arrow functions cuando corren dentro
+    // del callback de evaluate, y eso rompe en el browser context.
+    const cronograma = extractCronogramaFromHtml(html)
+    const basicInfo = extractBasicInfoFromHtml(html)
 
     console.log(`[OpportunityScraper] ${noticeUid}: ${cronograma.length} eventos del cronograma, entidad="${basicInfo.entidad || '?'}", valor=${basicInfo.precio_base || '?'}`)
 
@@ -139,10 +142,18 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
 }
 
 /**
- * Extract basic process information from the OpportunityDetail page DOM.
- * Used during bootstrap when the public API dataset hasn't indexed the
- * process yet — gives us enough data to populate the UI until the API
- * catches up.
+ * Normalize whitespace in a text fragment.
+ */
+function normalizeText(s: string): string {
+  return s.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Extract basic process information from the OpportunityDetail HTML.
+ *
+ * Corre en Node (no en el browser) usando cheerio — así evitamos el problema
+ * de `__name is not defined` que aparece cuando tsx/esbuild con keepNames
+ * transpila código que luego se pasa a page.evaluate().
  *
  * SECOP renders labels with `data-sentencecode` attributes and values in
  * sibling cells. Strategy:
@@ -152,196 +163,187 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
  *
  * Returns nulls for anything we can't find — monitor handles partial data.
  */
-async function extractBasicInfo(page: Page): Promise<BasicProcessInfo> {
-  return await page.evaluate(() => {
-    // NOTA: todas las funciones aquí están declaradas como `const arrow = () => {}`
-    // a propósito. `function foo() {}` declarations son transformadas por tsx con
-    // el helper __name() que no existe en el browser context → ReferenceError.
+function extractBasicInfoFromHtml(html: string): BasicProcessInfo {
+  const $ = cheerio.load(html)
 
-    const normalize = (s: string): string => s.replace(/\s+/g, ' ').trim()
-
-    // Find the value cell associated with a label element.
-    // Label and value are typically sibling <td> inside the same <tr>,
-    // or the value is in the NEXT sibling td of the label's parent td.
-    const getValueNear = (labelEl: Element): string | null => {
-      // Strategy A: next sibling of the label's closest <td>
-      const labelTd = labelEl.closest('td')
-      if (labelTd) {
-        let next = labelTd.nextElementSibling
-        while (next && !next.textContent?.trim()) next = next.nextElementSibling
-        if (next?.textContent?.trim()) return normalize(next.textContent)
+  const getValueNear = (labelEl: ReturnType<typeof $>): string | null => {
+    const labelText = normalizeText(labelEl.text())
+    const labelTd = labelEl.closest('td')
+    if (labelTd.length > 0) {
+      let next = labelTd.next()
+      while (next.length > 0 && !normalizeText(next.text())) next = next.next()
+      const t = normalizeText(next.text())
+      if (t) return t
+    }
+    const row = labelEl.closest('tr')
+    if (row.length > 0) {
+      const cells = row.find('td').toArray()
+      for (let i = cells.length - 1; i >= 0; i--) {
+        const t = normalizeText($(cells[i]).text())
+        if (t && t !== labelText) return t
       }
-      // Strategy B: label's parent row, last cell with content
-      const row = labelEl.closest('tr')
-      if (row) {
-        const cells = Array.from(row.querySelectorAll('td'))
-        for (let i = cells.length - 1; i >= 0; i--) {
-          const t = normalize(cells[i].textContent || '')
-          if (t && !cells[i].contains(labelEl)) return t
+    }
+    return null
+  }
+
+  const findBySentenceCode = (patterns: RegExp[]): string | null => {
+    let found: string | null = null
+    $('[data-sentencecode]').each((_, el) => {
+      if (found) return
+      const code = $(el).attr('data-sentencecode') || ''
+      if (patterns.some(p => p.test(code))) {
+        const v = getValueNear($(el))
+        if (v) {
+          found = v
+          return false // break
         }
       }
-      return null
-    }
+    })
+    return found
+  }
 
-    const findBySentenceCode = (patterns: RegExp[]): string | null => {
-      const labels = Array.from(document.querySelectorAll('[data-sentencecode]'))
-      for (const label of labels) {
-        const code = label.getAttribute('data-sentencecode') || ''
-        if (patterns.some(p => p.test(code))) {
-          const v = getValueNear(label)
-          if (v) return v
+  const findByTextLabel = (labelPatterns: RegExp[]): string | null => {
+    let found: string | null = null
+    $('td, th, span, label, div').each((_, el) => {
+      if (found) return
+      const text = normalizeText($(el).text())
+      if (text.length === 0 || text.length > 80) return
+      if (labelPatterns.some(p => p.test(text))) {
+        const v = getValueNear($(el))
+        if (v && v !== text) {
+          found = v
+          return false
         }
       }
-      return null
+    })
+    return found
+  }
+
+  const findById = (ids: string[]): string | null => {
+    for (const id of ids) {
+      const el = $(`#${id}`)
+      if (el.length === 0) continue
+      const val = (el.attr('value') || el.text() || '').trim()
+      const v = normalizeText(val)
+      if (v) return v
     }
+    return null
+  }
 
-    const findByTextLabel = (labelPatterns: RegExp[]): string | null => {
-      const all = Array.from(document.querySelectorAll('td, th, span, label, div'))
-      for (const el of all) {
-        const text = normalize(el.textContent || '')
-        if (text.length > 80) continue // skip paragraphs
-        if (labelPatterns.some(p => p.test(text))) {
-          const v = getValueNear(el)
-          if (v && v !== text) return v
-        }
-      }
-      return null
-    }
+  const entidad = findBySentenceCode([/EntityName/i, /lblEntityLabel/i, /\.Entity\b/])
+    || findById(['txtEntityName', 'spnEntidad', 'lblEntidad'])
+    || findByTextLabel([/^Entidad( estatal)?$/i, /^Nombre de la entidad$/i])
 
-    // Try selectors for common ID-based inputs (readonly display fields)
-    const findById = (ids: string[]): string | null => {
-      for (const id of ids) {
-        const el = document.getElementById(id)
-        if (!el) continue
-        const input = el as HTMLInputElement
-        const v = normalize(input.value || el.textContent || '')
-        if (v) return v
-      }
-      return null
-    }
+  const nit_entidad = findBySentenceCode([/NIT|Nit|TaxIdentification/i])
+    || findByTextLabel([/^NIT$/i])
 
-    const entidad = findBySentenceCode([/EntityName/i, /lblEntityLabel/i, /\.Entity\b/])
-      || findById(['txtEntityName', 'spnEntidad', 'lblEntidad'])
-      || findByTextLabel([/^Entidad( estatal)?$/i, /^Nombre de la entidad$/i])
+  const referencia = findBySentenceCode([/ProcessReference|lblReference|txtReference/i])
+    || findById(['txtProcessReference', 'spnProcessReference'])
+    || findByTextLabel([/^Referencia( del proceso)?$/i, /^N[úu]mero del proceso$/i])
 
-    const nit_entidad = findBySentenceCode([/NIT|Nit|TaxIdentification/i])
-      || findByTextLabel([/^NIT$/i])
+  const objeto = findBySentenceCode([/ProcureObject|lblObjectLabel|txtObject\b/i])
+    || findById(['txtObjectContractsLabel', 'spnObjectContractsLabel', 'txtObjeto'])
+    || findByTextLabel([/^Objeto( del contrato)?$/i, /^Nombre del procedimiento$/i, /^T[íi]tulo$/i])
 
-    const referencia = findBySentenceCode([/ProcessReference|lblReference|txtReference/i])
-      || findById(['txtProcessReference', 'spnProcessReference'])
-      || findByTextLabel([/^Referencia( del proceso)?$/i, /^N[úu]mero del proceso$/i])
+  const descripcion = findBySentenceCode([/Description|lblDescription/i])
+    || findByTextLabel([/^Descripci[óo]n( del procedimiento)?$/i])
 
-    const objeto = findBySentenceCode([/ProcureObject|lblObjectLabel|txtObject\b/i])
-      || findById(['txtObjectContractsLabel', 'spnObjectContractsLabel', 'txtObjeto'])
-      || findByTextLabel([/^Objeto( del contrato)?$/i, /^Nombre del procedimiento$/i, /^T[íi]tulo$/i])
+  const modalidad = findBySentenceCode([/ContractType|ProcurementMethod/i])
+    || findByTextLabel([/^Modalidad( de contrataci[óo]n)?$/i, /^Tipo de proceso$/i])
 
-    const descripcion = findBySentenceCode([/Description|lblDescription/i])
-      || findByTextLabel([/^Descripci[óo]n( del procedimiento)?$/i])
+  const tipo_contrato = findBySentenceCode([/TypeOfContract|ContractCategory/i])
+    || findByTextLabel([/^Tipo de contrato$/i])
 
-    const modalidad = findBySentenceCode([/ContractType|ProcurementMethod/i])
-      || findByTextLabel([/^Modalidad( de contrataci[óo]n)?$/i, /^Tipo de proceso$/i])
+  const precio_base = findBySentenceCode([/EstimatedValue|BaseAmount|BasePrice/i])
+    || findById(['txtEstimatedValue', 'spnEstimatedValue', 'txtPrecioBase'])
+    || findByTextLabel([/^Valor( estimado| total)?( del contrato)?$/i, /^Precio base$/i, /^Cuant[íi]a$/i])
 
-    const tipo_contrato = findBySentenceCode([/TypeOfContract|ContractCategory/i])
-      || findByTextLabel([/^Tipo de contrato$/i])
+  const fase = findBySentenceCode([/CurrentPhase|lblPhase|CurrentStep/i])
+    || findByTextLabel([/^Fase( actual)?$/i])
 
-    const precio_base = findBySentenceCode([/EstimatedValue|BaseAmount|BasePrice/i])
-      || findById(['txtEstimatedValue', 'spnEstimatedValue', 'txtPrecioBase'])
-      || findByTextLabel([/^Valor( estimado| total)?( del contrato)?$/i, /^Precio base$/i, /^Cuant[íi]a$/i])
+  const estado = findBySentenceCode([/CurrentState|lblStatus|ProcedureState/i])
+    || findByTextLabel([/^Estado( actual)?$/i])
 
-    const fase = findBySentenceCode([/CurrentPhase|lblPhase|CurrentStep/i])
-      || findByTextLabel([/^Fase( actual)?$/i])
+  const duracion = findBySentenceCode([/Duration\b|lblDuration/i])
+    || findByTextLabel([/^Duraci[óo]n( del contrato)?$/i])
 
-    const estado = findBySentenceCode([/CurrentState|lblStatus|ProcedureState/i])
-      || findByTextLabel([/^Estado( actual)?$/i])
+  const unidad_duracion = findBySentenceCode([/DurationUnit/i])
+    || findByTextLabel([/^Unidad de duraci[óo]n$/i])
 
-    const duracion = findBySentenceCode([/Duration\b|lblDuration/i])
-      || findByTextLabel([/^Duraci[óo]n( del contrato)?$/i])
-
-    const unidad_duracion = findBySentenceCode([/DurationUnit/i])
-      || findByTextLabel([/^Unidad de duraci[óo]n$/i])
-
-    return {
-      entidad,
-      nit_entidad,
-      referencia,
-      objeto,
-      descripcion,
-      modalidad,
-      tipo_contrato,
-      precio_base,
-      fase,
-      estado,
-      duracion,
-      unidad_duracion,
-    }
-  })
+  return {
+    entidad,
+    nit_entidad,
+    referencia,
+    objeto,
+    descripcion,
+    modalidad,
+    tipo_contrato,
+    precio_base,
+    fase,
+    estado,
+    duracion,
+    unidad_duracion,
+  }
 }
 
 /**
- * Pull the cronograma table from the loaded page.
- *
- * The scraper runs inside Playwright so we can leverage the browser's DOM
- * (more robust than static cheerio parsing for dynamically-hydrated content).
+ * Pull the cronograma table from the loaded HTML.
  *
  * Strategy: look for any table whose header row mentions schedule-like
  * keywords (fecha, inicio, fin, estado, hito, etapa), then extract rows.
  */
-async function extractCronograma(page: Page): Promise<CronogramaEvento[]> {
-  const events = await page.evaluate(() => {
-    type Ev = { nombre: string; fecha_inicio: string | null; fecha_fin: string | null; estado: string | null }
+function extractCronogramaFromHtml(html: string): CronogramaEvento[] {
+  const $ = cheerio.load(html)
+  const results: CronogramaEvento[] = []
 
-    const results: Ev[] = []
+  const tables = $('table').toArray()
+  for (const table of tables) {
+    const $table = $(table)
+    const headerCells = $table.find('thead th, tr:first-child th, tr:first-child td').toArray()
+    const headers = headerCells
+      .map(h => normalizeText($(h).text()).toLowerCase())
+      .filter(Boolean)
 
-    const tables = Array.from(document.querySelectorAll('table'))
-    for (const table of tables) {
-      const headers = Array.from(table.querySelectorAll('thead th, tr:first-child th, tr:first-child td'))
-        .map(h => (h.textContent || '').toLowerCase().trim())
-        .filter(Boolean)
+    if (headers.length < 2) continue
 
-      if (headers.length < 2) continue
+    const hasScheduleKeywords = headers.some(h =>
+      /(fecha\s+inicio|fecha\s+fin|hito|etapa|cronograma|scheduled|plazo)/i.test(h),
+    )
+    if (!hasScheduleKeywords) continue
 
-      const hasScheduleKeywords = headers.some(h =>
-        /(fecha\s+inicio|fecha\s+fin|hito|etapa|cronograma|scheduled|plazo)/i.test(h),
-      )
-      if (!hasScheduleKeywords) continue
+    const nameIdx = headers.findIndex(h => /(nombre|hito|etapa|descripci|actividad)/i.test(h))
+    const startIdx = headers.findIndex(h => /(inicio|desde|start)/i.test(h))
+    const endIdx = headers.findIndex(h => /(fin|hasta|end|vencim)/i.test(h))
+    const stateIdx = headers.findIndex(h => /(estado|status)/i.test(h))
 
-      // Identify column indexes (fuzzy)
-      const nameIdx = headers.findIndex(h => /(nombre|hito|etapa|descripci|actividad)/i.test(h))
-      const startIdx = headers.findIndex(h => /(inicio|desde|start)/i.test(h))
-      const endIdx = headers.findIndex(h => /(fin|hasta|end|vencim)/i.test(h))
-      const stateIdx = headers.findIndex(h => /(estado|status)/i.test(h))
+    const rows = $table.find('tbody tr, tr').toArray()
+    for (const row of rows) {
+      const $row = $(row)
+      const cells = $row.find('td').toArray().map(c => {
+        const $c = $(c).clone()
+        $c.find('.DateTimeDetail, font.DateTimeDetail').remove()
+        return normalizeText($c.text())
+      })
+      if (cells.length === 0) continue
 
-      const rows = Array.from(table.querySelectorAll('tbody tr, tr'))
-      for (const row of rows) {
-        const cells = Array.from(row.querySelectorAll('td')).map(c => {
-          const clone = c.cloneNode(true) as HTMLElement
-          clone.querySelectorAll('.DateTimeDetail, font.DateTimeDetail').forEach(el => el.remove())
-          return (clone.textContent || '').replace(/\s+/g, ' ').trim()
-        })
-        if (cells.length === 0) continue
+      // Skip header-like rows
+      if (cells.length === headers.length && cells.every(c => /^(fecha|hito|etapa|estado|nombre|inicio|fin)/i.test(c))) continue
 
-        // Skip rows that look like headers (all cells match header count and contain labels)
-        if (cells.length === headers.length && cells.every(c => /^(fecha|hito|etapa|estado|nombre|inicio|fin)/i.test(c))) continue
+      const nombre = nameIdx >= 0 ? cells[nameIdx] : cells[0]
+      if (!nombre || nombre.length < 3) continue
 
-        const nombre = nameIdx >= 0 ? cells[nameIdx] : cells[0]
-        if (!nombre || nombre.length < 3) continue
-
-        results.push({
-          nombre,
-          fecha_inicio: startIdx >= 0 ? cells[startIdx] || null : null,
-          fecha_fin: endIdx >= 0 ? cells[endIdx] || null : null,
-          estado: stateIdx >= 0 ? cells[stateIdx] || null : null,
-        })
-      }
-
-      // First matching table wins (usually the cronograma table is unique)
-      if (results.length > 0) break
+      results.push({
+        nombre,
+        fecha_inicio: startIdx >= 0 ? cells[startIdx] || null : null,
+        fecha_fin: endIdx >= 0 ? cells[endIdx] || null : null,
+        estado: stateIdx >= 0 ? cells[stateIdx] || null : null,
+      })
     }
 
-    return results
-  })
+    if (results.length > 0) break
+  }
 
-  return events
+  return results
 }
 
 // ── Heuristic: when to trigger re-scrape ──────────────────────
