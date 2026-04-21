@@ -12,6 +12,8 @@
  *
  * Regular polling uses the free public API (fetcher.ts) to avoid captcha cost.
  */
+import { writeFile, mkdir } from 'fs/promises'
+import { join } from 'path'
 import { chromium, type Page } from 'playwright'
 import * as cheerio from 'cheerio'
 import { config, USER_AGENT } from '../config.js'
@@ -139,6 +141,20 @@ export async function scrapeOpportunityDetail(noticeUid: string): Promise<Opport
 
     if (!html) {
       throw new Error('Failed to load OpportunityDetail after all retry attempts')
+    }
+
+    // Guardar el HTML para diagnóstico. Se sobreescribe cada scrape.
+    // Esto nos permite iterar los selectores sin volver a consumir créditos
+    // de CapSolver.
+    try {
+      const debugDir = join(process.cwd(), 'debug-html')
+      await mkdir(debugDir, { recursive: true })
+      const filename = `opportunity-${noticeUid}.html`
+      await writeFile(join(debugDir, filename), html, 'utf-8')
+      console.log(`[OpportunityScraper] Saved HTML to debug-html/${filename} (${html.length} bytes)`)
+    } catch (err) {
+      console.warn('[OpportunityScraper] Failed to save debug HTML:',
+        err instanceof Error ? err.message : err)
     }
     // Extraer con cheerio en vez de page.evaluate() para evitar el problema
     // de `__name is not defined` — tsx/esbuild con keepNames transforma tanto
