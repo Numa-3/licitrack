@@ -424,13 +424,24 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring }: {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#EAEAEA]">
-            {processes.map(p => (
+            {processes.map(p => {
+              const isPrecontractual = p.tipo_proceso === 'precontractual'
+              return (
               <tr key={p.id} onClick={() => onSelect(p)}
-                className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${!p.monitoring_enabled ? 'opacity-50' : ''}`}>
-                <td className="px-4 py-3 max-w-[300px]">
+                className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${!p.monitoring_enabled ? 'opacity-50' : ''} ${isPrecontractual ? 'bg-violet-50/40 hover:bg-violet-50/70' : ''}`}>
+                <td className={`px-4 py-3 max-w-[300px] ${isPrecontractual ? 'border-l-2 border-violet-400' : ''}`}>
                   <p className="font-medium text-gray-900 truncate">{p.entidad}</p>
                   <p className="text-xs text-gray-500 truncate mt-0.5">{p.objeto}</p>
                   <div className="flex items-center gap-2 mt-1">
+                    {isPrecontractual ? (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-600/20">
+                        Precontractual
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-600/20">
+                        En ejecución
+                      </span>
+                    )}
                     <SourceBadge source={p.source} />
                     {p.api_pending && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-600/20">
@@ -462,7 +473,8 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring }: {
                   </button>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

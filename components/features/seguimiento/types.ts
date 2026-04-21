@@ -24,6 +24,7 @@ export type Process = {
   next_deadline: string | null
   next_deadline_label: string | null
   api_pending?: boolean
+  tipo_proceso?: 'contractual' | 'precontractual'
   secop_accounts?: { name: string } | null
 }
 
