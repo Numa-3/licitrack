@@ -188,12 +188,17 @@ async function monitorOneProcess(
   }
 
   // Persist new snapshot — distinct source_type to flag scraper-only records
-  await admin.from('secop_process_snapshots').insert({
+  const { error: insertError } = await admin.from('secop_process_snapshots').insert({
     process_id: proc.id,
     snapshot_json: snapshot,
     source_type: apiFound ? 'api_precontractual' : 'scraper_bootstrap',
     hash: snapshotHash,
   })
+  if (insertError) {
+    console.error(`[Precontractual] ${proc.notice_uid}: snapshot insert FAILED:`, insertError.message, insertError.code)
+    // No seguimos con diff/update si el snapshot no se pudo persistir
+    return { changesFound: 0 }
+  }
 
   // Diff
   const changes = diffPrecontractualSnapshots(previous, snapshot, ourNits)
