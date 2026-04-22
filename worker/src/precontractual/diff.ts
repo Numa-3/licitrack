@@ -272,7 +272,11 @@ export function findNextDeadline(s: PrecontractualSnapshot): {
 
   if (candidates.length === 0) return { deadline: null, label: null }
   candidates.sort((a, b) => a.ms - b.ms)
-  return { deadline: candidates[0].date, label: candidates[0].label }
+  // Convertir a ISO para que Postgres TIMESTAMPTZ acepte el valor. Si
+  // devolviéramos el string crudo de SECOP ("15/04/2026 10:00:00 AM"),
+  // el UPDATE completo fallaría con "invalid input syntax" y ningún campo
+  // se escribiría.
+  return { deadline: new Date(candidates[0].ms).toISOString(), label: candidates[0].label }
 }
 
 /**
