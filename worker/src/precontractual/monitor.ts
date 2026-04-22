@@ -109,14 +109,17 @@ async function monitorOneProcess(
   let needsScrape = false
   if (!apiFound) {
     // API vacía → siempre scrape si no tenemos snapshot aún (bootstrap).
-    // Si ya tenemos un snapshot del scraper, solo re-scrape cada ~6h (para no
-    // quemar créditos esperando que la API aparezca).
+    // Si ya tenemos snapshot del scraper, el throttle depende de si la
+    // extracción anterior fue completa: 6h normal, 30 min si faltaba entidad
+    // (probablemente por selectores desactualizados o página parcialmente cargada).
     if (isBootstrap) {
       needsScrape = true
     } else {
       const lastCaptured = previous?.cronograma_captured_at
       const age = lastCaptured ? Date.now() - new Date(lastCaptured).getTime() : Infinity
-      needsScrape = age > 6 * 60 * 60 * 1000 // 6h
+      const wasComplete = !!previous?.entidad
+      const throttleMs = wasComplete ? 6 * 60 * 60 * 1000 : 30 * 60 * 1000
+      needsScrape = age > throttleMs
     }
   } else if (isBootstrap) {
     // API encontró el proceso y es la primera vez: scrape para capturar cronograma con horas
@@ -218,31 +221,44 @@ async function monitorOneProcess(
     }
   }
 
-  // Keep process row fields in sync for UI display
+  // Keep process row fields in sync for UI display.
+  // CRÍTICO: entidad y objeto son NOT NULL en el schema → si el scrape
+  // devuelve null (extracción parcial), escribir null tumba el UPDATE entero
+  // silenciosamente. Por eso solo asignamos campos con valor no-null: así
+  // preservamos datos anteriores y nunca perdemos info por un scrape parcial.
   const { deadline, label } = findNextDeadline(snapshot)
   const updatePayload: Record<string, unknown> = {
     last_monitored_at: new Date().toISOString(),
     next_deadline: deadline,
     next_deadline_label: label,
-    entidad: snapshot.entidad,
-    objeto: snapshot.nombre_procedimiento,
-    estado: snapshot.estado_actual,
-    nit_entidad: snapshot.nit_entidad,
-    modalidad: snapshot.modalidad,
-    fase: snapshot.fase_actual,
-    id_portafolio: snapshot.phases[0]?.id_del_portafolio || null,
-    precio_base: snapshot.precio_base,
     adjudicado: snapshot.adjudicado,
-    nit_adjudicado: snapshot.proveedor_adjudicado?.nit || null,
-    nombre_adjudicado: snapshot.proveedor_adjudicado?.nombre || null,
-    valor_adjudicado: snapshot.proveedor_adjudicado?.valor || null,
   }
+  const setIfPresent = <T>(key: string, value: T | null | undefined) => {
+    if (value !== null && value !== undefined && value !== '') {
+      updatePayload[key] = value
+    }
+  }
+  setIfPresent('entidad', snapshot.entidad)
+  setIfPresent('objeto', snapshot.nombre_procedimiento)
+  setIfPresent('estado', snapshot.estado_actual)
+  setIfPresent('nit_entidad', snapshot.nit_entidad)
+  setIfPresent('modalidad', snapshot.modalidad)
+  setIfPresent('fase', snapshot.fase_actual)
+  setIfPresent('id_portafolio', snapshot.phases[0]?.id_del_portafolio)
+  setIfPresent('precio_base', snapshot.precio_base)
+  setIfPresent('nit_adjudicado', snapshot.proveedor_adjudicado?.nit)
+  setIfPresent('nombre_adjudicado', snapshot.proveedor_adjudicado?.nombre)
+  setIfPresent('valor_adjudicado', snapshot.proveedor_adjudicado?.valor)
+
   // Si la API ahora sí encontró el proceso, limpiamos el flag pending
   if (apiFound && proc.api_pending) {
     updatePayload.api_pending = false
     console.log(`[Precontractual] ${proc.notice_uid}: api_pending → false (API lo indexó)`)
   }
-  await admin.from('secop_processes').update(updatePayload).eq('id', proc.id)
+  const { error: updateError } = await admin.from('secop_processes').update(updatePayload).eq('id', proc.id)
+  if (updateError) {
+    console.error(`[Precontractual] ${proc.notice_uid}: update FAILED:`, updateError.message, updateError.code)
+  }
 
   if (changes.length > 0) {
     console.log(`[Precontractual] ${proc.notice_uid}: ${changes.length} change(s) detected`)
