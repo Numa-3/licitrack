@@ -30,7 +30,13 @@ type UiCronogramaEvent = {
   status: 'upcoming' | 'active' | 'past'
 }
 
-/** Parse SECOP date format "DD/MM/YYYY HH:MM:SS AM/PM" to ISO string. */
+/**
+ * Parse SECOP date format "DD/MM/YYYY HH:MM:SS AM/PM" to ISO string.
+ *
+ * SECOP siempre publica las horas en UTC-05:00 (Bogotá). Construimos el
+ * string ISO con offset explícito para evitar que el runtime (Vercel = UTC)
+ * interprete el string como local y termine corriendo todo 5 horas.
+ */
 function parseSecopDate(s: string | null): string | null {
   if (!s) return null
   // ISO already
@@ -43,7 +49,9 @@ function parseSecopDate(s: string | null): string | null {
   let hour = parseInt(h, 10)
   if ((ampm || '').toUpperCase() === 'PM' && hour < 12) hour += 12
   if ((ampm || '').toUpperCase() === 'AM' && hour === 12) hour = 0
-  const date = new Date(parseInt(y, 10), parseInt(mo, 10) - 1, parseInt(d, 10), hour, parseInt(mi, 10), parseInt(se || '0', 10))
+  const pad = (n: number | string) => String(n).padStart(2, '0')
+  const isoBogota = `${y}-${pad(mo)}-${pad(d)}T${pad(hour)}:${pad(mi)}:${pad(se || 0)}-05:00`
+  const date = new Date(isoBogota)
   return isNaN(date.getTime()) ? null : date.toISOString()
 }
 

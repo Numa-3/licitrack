@@ -283,6 +283,10 @@ export function findNextDeadline(s: PrecontractualSnapshot): {
  * Parse dates in the formats SECOP uses:
  *   - ISO 8601: "2025-12-02T00:00:00.000"
  *   - DD/MM/YYYY H:MM:SS AM/PM: "25/06/2025 2:00:00 AM"
+ *
+ * SECOP siempre publica las horas en UTC-05:00 (Bogotá). Construimos el ISO
+ * con offset explícito para que sea independiente del TZ del worker host
+ * (puede ser Windows local, Linux UTC, etc).
  */
 function parseFlexibleDate(s: string): number {
   const iso = new Date(s).getTime()
@@ -293,11 +297,9 @@ function parseFlexibleDate(s: string): number {
     let hour = parseInt(h, 10)
     if ((ampm || '').toUpperCase() === 'PM' && hour < 12) hour += 12
     if ((ampm || '').toUpperCase() === 'AM' && hour === 12) hour = 0
-    const date = new Date(
-      parseInt(y, 10), parseInt(mo, 10) - 1, parseInt(d, 10),
-      hour, parseInt(mi, 10), parseInt(se || '0', 10),
-    )
-    return date.getTime()
+    const pad = (n: number | string) => String(n).padStart(2, '0')
+    const isoBogota = `${y}-${pad(mo)}-${pad(d)}T${pad(hour)}:${pad(mi)}:${pad(se || 0)}-05:00`
+    return new Date(isoBogota).getTime()
   }
   return NaN
 }
