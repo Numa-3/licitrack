@@ -60,3 +60,28 @@ export async function PATCH(
 
   return Response.json(data)
 }
+
+/**
+ * DELETE /api/secop/processes/[id]
+ *
+ * Hard delete del proceso. Cascadea a secop_process_snapshots,
+ * secop_process_changes y notifications vía FK ON DELETE CASCADE
+ * configurados en migrations 002 y 006. Solo jefe.
+ */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const auth = await requireJefe()
+  if ('error' in auth) return auth.error
+  const { supabase } = auth
+  const { id } = await params
+
+  const { error } = await supabase
+    .from('secop_processes')
+    .delete()
+    .eq('id', id)
+
+  if (error) return Response.json({ error: error.message }, { status: 500 })
+  return Response.json({ ok: true })
+}

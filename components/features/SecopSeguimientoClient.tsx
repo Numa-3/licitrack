@@ -5,7 +5,7 @@ import { formatCurrency } from '@/lib/utils/format'
 import {
   Eye, AlertTriangle, Clock, Plus, X,
   ChevronLeft, ChevronRight, Loader2,
-  ToggleLeft, ToggleRight, Bell, Activity,
+  ToggleLeft, ToggleRight, Bell, Activity, Trash2,
   type LucideIcon,
 } from 'lucide-react'
 import type { Process, Change, Account, WorkerStatus } from './seguimiento/types'
@@ -165,6 +165,29 @@ export default function SecopSeguimientoClient({
       return
     }
     showToast(name ? 'Nombre guardado' : 'Nombre eliminado', 'success')
+  }
+
+  const deleteProcess = async (id: string) => {
+    const proc = processes.find(p => p.id === id)
+    const label = proc?.custom_name || proc?.entidad || 'este proceso'
+    if (!confirm(
+      `¿Eliminar "${label}"?\n\nSe borrarán también todos sus snapshots, cambios detectados y notificaciones. Esta acción NO se puede deshacer.`,
+    )) return
+
+    const prev = processes
+    // Optimistic remove
+    setProcesses(ps => ps.filter(p => p.id !== id))
+    setSelected(s => s && s.id === id ? null : s)
+    setTotalCount(c => Math.max(0, c - 1))
+
+    const res = await fetch(`/api/secop/processes/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      setProcesses(prev)
+      setTotalCount(prev.length)
+      showToast('Error al eliminar el proceso')
+      return
+    }
+    showToast('Proceso eliminado', 'success')
   }
 
   const toggleAccount = async (id: string, active: boolean) => {
@@ -349,6 +372,7 @@ export default function SecopSeguimientoClient({
             processes={processes}
             onSelect={setSelected}
             onToggleMonitoring={toggleMonitoring}
+            onDelete={isJefe ? deleteProcess : undefined}
           />
           {totalPages > 1 && (
             <div className="flex items-center justify-between mt-4">
@@ -429,10 +453,11 @@ function WorkerStatusCard({ status }: { status: WorkerStatus }) {
   )
 }
 
-function ProcessTable({ processes, onSelect, onToggleMonitoring }: {
+function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
   processes: Process[]
   onSelect: (p: Process) => void
   onToggleMonitoring: (id: string, enabled: boolean) => void
+  onDelete?: (id: string) => void
 }) {
   return (
     <div className="bg-white rounded-xl border border-[#EAEAEA] overflow-hidden" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
@@ -491,13 +516,22 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring }: {
                   {formatCurrency(p.valor_estimado)}
                 </td>
                 <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                  <button onClick={() => onToggleMonitoring(p.id, !p.monitoring_enabled)}
-                    title={p.monitoring_enabled ? 'Desactivar seguimiento' : 'Activar seguimiento'}
-                    className="transition-colors">
-                    {p.monitoring_enabled
-                      ? <ToggleRight size={22} className="text-indigo-600" />
-                      : <ToggleLeft size={22} className="text-gray-300" />}
-                  </button>
+                  <div className="inline-flex items-center gap-1.5">
+                    <button onClick={() => onToggleMonitoring(p.id, !p.monitoring_enabled)}
+                      title={p.monitoring_enabled ? 'Desactivar seguimiento' : 'Activar seguimiento'}
+                      className="transition-colors">
+                      {p.monitoring_enabled
+                        ? <ToggleRight size={22} className="text-indigo-600" />
+                        : <ToggleLeft size={22} className="text-gray-300" />}
+                    </button>
+                    {onDelete && (
+                      <button onClick={() => onDelete(p.id)}
+                        title="Eliminar proceso"
+                        className="p-1 text-gray-300 hover:text-red-600 transition-colors">
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
               )
