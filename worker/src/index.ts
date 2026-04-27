@@ -38,6 +38,12 @@ const CRON_SCHEDULES: { cron: string; label: string }[] = [
 // Flag para evitar que un schedule pise un ciclo en curso
 let cycleRunning = false
 
+// Hard timeout — si un ciclo tarda más que esto, lo damos por colgado y
+// liberamos el flag para que el siguiente cron pueda correr. Sin esto, un
+// Playwright stuck (página que no carga, captcha en loop) deja cycleRunning
+// en true para SIEMPRE y el worker deja de procesar todo aunque siga vivo.
+const CYCLE_TIMEOUT_MS = 25 * 60 * 1000 // 25 min
+
 async function tryRunFullCycle(trigger: string): Promise<void> {
   if (cycleRunning) {
     console.log(`[Worker] ${trigger} skipped: cycle already running`)
@@ -46,11 +52,21 @@ async function tryRunFullCycle(trigger: string): Promise<void> {
   cycleRunning = true
   const start = Date.now()
   console.log(`\n╔══ ${trigger} ══════════════════════╗`)
+
+  let timeoutHandle: NodeJS.Timeout | null = null
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error(`Cycle hard timeout after ${CYCLE_TIMEOUT_MS / 60000} min`)),
+      CYCLE_TIMEOUT_MS,
+    )
+  })
+
   try {
-    await runFullCycle()
+    await Promise.race([runFullCycle(), timeoutPromise])
   } catch (err) {
     console.error('[Worker] Cycle failed:', err instanceof Error ? err.message : err)
   } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle)
     cycleRunning = false
     const elapsed = ((Date.now() - start) / 1000).toFixed(1)
     console.log(`╚══ Cycle done in ${elapsed}s ══════╝\n`)
@@ -104,13 +120,20 @@ async function main() {
   await new Promise<void>(() => {})
 }
 
+// Flag para que dos ticks de polling no corran en paralelo. Sin esto, si un
+// bootstrap con captcha tarda > 30s, el siguiente tick arranca en paralelo,
+// la query de candidatos devuelve los mismos NTCs (porque last_monitored_at
+// sigue NULL hasta que termine el primero), y se duplica el trabajo →
+// 2x créditos CapSolver por nada.
+let pollRunning = false
+
 function startPollingLoop() {
   const POLL_INTERVAL_MS = 30_000
   console.log(`[Worker] Polling loop every ${POLL_INTERVAL_MS / 1000}s for sync + bootstrap`)
 
   setInterval(() => {
-    // Don't compete with a full cycle
-    if (cycleRunning) return
+    if (cycleRunning || pollRunning) return
+    pollRunning = true
 
     void (async () => {
       try {
@@ -123,6 +146,8 @@ function startPollingLoop() {
       } catch (err) {
         console.error('[Poll] Precontractual bootstrap failed:',
           err instanceof Error ? err.message : err)
+      } finally {
+        pollRunning = false
       }
     })()
   }, POLL_INTERVAL_MS)
@@ -284,6 +309,8 @@ async function processPendingSyncs() {
  * triggers the first captcha-protected scrape so the user sees the cronograma
  * with exact hours within ~30 seconds instead of waiting for the next 2h cycle.
  */
+const bootstrappingNotices = new Set<string>()
+
 async function bootstrapNewPrecontractual() {
   const { data: candidates } = await admin
     .from('secop_processes')
@@ -298,12 +325,26 @@ async function bootstrapNewPrecontractual() {
 
   for (const cand of candidates) {
     if (!cand.notice_uid) continue
-    console.log(`[Bootstrap] ${cand.notice_uid}: first-time capture`)
-    const res = await monitorOneNow(cand.id)
-    if ('error' in res) {
-      console.error(`[Bootstrap] ${cand.notice_uid} failed:`, res.error)
-    } else {
-      console.log(`[Bootstrap] ${cand.notice_uid}: done (${res.changesFound} changes)`)
+
+    // Lock por NTC: si ya estamos bootstrappeando este, saltarlo. Esto cubre
+    // el caso donde el polling es throttle-d (cycleRunning) pero más adelante
+    // un cron también lo levante, o cualquier race condition residual.
+    if (bootstrappingNotices.has(cand.notice_uid)) {
+      console.log(`[Bootstrap] ${cand.notice_uid}: skip (already bootstrapping)`)
+      continue
+    }
+    bootstrappingNotices.add(cand.notice_uid)
+
+    try {
+      console.log(`[Bootstrap] ${cand.notice_uid}: first-time capture`)
+      const res = await monitorOneNow(cand.id)
+      if ('error' in res) {
+        console.error(`[Bootstrap] ${cand.notice_uid} failed:`, res.error)
+      } else {
+        console.log(`[Bootstrap] ${cand.notice_uid}: done (${res.changesFound} changes)`)
+      }
+    } finally {
+      bootstrappingNotices.delete(cand.notice_uid)
     }
   }
 }
