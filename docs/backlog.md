@@ -1,7 +1,7 @@
 # LiciTrack — Backlog
 
 Fuente única de verdad para todo lo pendiente: mejoras a lo existente y features nuevas.
-Última actualización: 2026-04-21
+Última actualización: 2026-04-27
 
 ---
 
@@ -84,6 +84,29 @@ Funcionalidades que no existen todavía.
   - Retención: 7 días detallados, luego agregados diarios
 - **Relación**: NO reemplaza el Centro de monitoreo general — ambas ideas deberían ejecutarse juntas en el build de `/admin/monitoreo`. Esta es la capa "observabilidad interna del worker"
 - Origen: sesión del 2026-04-21 definiendo scraper-first fallback para precontractual; al tener bootstrap + polling + node-cron corriendo en paralelo, si alguno falla silenciosamente no nos enteramos
+
+#### Sistema de alertas push de errores críticos del sistema
+- **Tercera pata** del trío de observabilidad junto con "Centro de monitoreo" y "Métricas operativas del worker". Las dos primeras son PULL (el usuario entra a verlas); esta es PUSH (la alerta llega al usuario sin que tenga que entrar)
+- **Por qué**: si el worker se cae a las 3am, las cuentas SECOP expiran, o CapSolver se queda sin créditos, hoy no me entero hasta que abro LiciTrack o un usuario reclama. Casos reales: 2026-04-22 worker bloqueado 3 días sin enterarnos; 2026-04-26 dos cuentas SECOP fallando login varias horas; CapSolver con error 1001 acumulando fallos
+- **Qué alerta** (solo crítico al inicio):
+  - Worker sin heartbeat > 30 min
+  - Login falla repetidamente en TODAS las cuentas (no solo una)
+  - Base de datos no responde
+  - CapSolver < 100 créditos OR tasa fallo > 30% en última hora
+  - Cualquier ciclo > 25 min (toca el timeout duro)
+  - Procesos precontractuales sin actualizar > 24h cuando deberían cada 5h
+- **Qué NO alerta**: errores individuales aislados (1 captcha que falla), cosas que la lógica recupera sola (sesión expirada que se re-loguea)
+- **Decisiones tomadas**:
+  - Canal: Telegram (reúsa el bot del sistema de notificaciones de procesos)
+  - Granularidad: agregada cada 15 min (no instantánea — evita ruido si SECOP cae 1h)
+  - Destinatarios: solo jefe
+- **Consideraciones técnicas**:
+  - Tabla `system_alerts` (id, type, severity, message, fired_at, resolved_at, sent_at)
+  - Cron cada 15 min lee `worker_heartbeats` + `secop_monitor_log` + `system_health_log` y dispara alertas
+  - No re-disparar la misma regla hasta que se resuelva (evita spam)
+  - En `/admin/monitoreo` mostrar timeline de alertas + estado activas/resueltas
+- **Prerequisito**: tener Telegram funcionando (otra idea ya en backlog)
+- **Relación con el trío**: las 3 ideas (monitoreo + métricas + alertas) deberían construirse juntas en el mismo sprint — comparten infraestructura y cada una sin las otras pierde la mitad de su valor
 
 #### Consola de administrador (`/admin`)
 - Hard delete global (reset completo con confirmación "CONFIRMAR")

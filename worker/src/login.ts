@@ -1,4 +1,6 @@
-import { chromium } from 'playwright'
+import { writeFile, mkdir } from 'fs/promises'
+import { join } from 'path'
+import { chromium, type Page } from 'playwright'
 import { config, SECOP } from './config.js'
 import { admin } from './db.js'
 import { decrypt } from './crypto.js'
@@ -13,11 +15,53 @@ import { solveCaptcha as solveCaptchaShared } from './captcha.js'
  *   2. Select entity from dropdown (each account has multiple entities/companies)
  *   3. Click "Entrar" → session active for that entity
  *
+ * Robustez: hasta MAX_LOGIN_ATTEMPTS intentos con backoff exponencial. Cada
+ * intento abre un browser limpio. Al fallar, guarda screenshot + HTML en
+ * debug-html/login-fail-* para diagnosticar después qué tipo de falla fue
+ * (página no cargó, sesión bloqueada, captcha fallido, error visible, etc.).
+ *
  * Run standalone:
  *   npx tsx src/login.ts                    # all active accounts
  *   npx tsx src/login.ts <accountId>        # specific account
  *   npx tsx src/login.ts --discover <user>  # discover entities for a username
  */
+const MAX_LOGIN_ATTEMPTS = 3
+const RETRY_BACKOFF_MS = [5_000, 30_000] // 5s antes del 2do intento, 30s antes del 3ro
+
+async function captureFailureArtifacts(
+  page: Page | null,
+  accountName: string,
+  attempt: number,
+  reason: string,
+): Promise<void> {
+  if (!page) return
+  try {
+    const debugDir = join(process.cwd(), 'debug-html')
+    await mkdir(debugDir, { recursive: true })
+    const safeName = accountName.replace(/[^A-Za-z0-9_-]/g, '_')
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const base = join(debugDir, `login-fail-${safeName}-attempt${attempt}-${stamp}`)
+
+    const finalUrl = page.url()
+    const title = await page.title().catch(() => '')
+    const bodySnippet = await page.evaluate(`
+      (document.body && document.body.innerText || '').slice(0, 300).replace(/\\s+/g, ' ').trim()
+    `).catch(() => '') as string
+
+    console.error(`[Login] ${accountName} attempt ${attempt} FAILED — reason: ${reason}`)
+    console.error(`[Login]   url: ${finalUrl}`)
+    console.error(`[Login]   title: "${title}"`)
+    console.error(`[Login]   body snippet: "${bodySnippet}"`)
+
+    const html = await page.content().catch(() => '<could not capture content>')
+    await writeFile(`${base}.html`, html, 'utf-8').catch(() => undefined)
+    await page.screenshot({ path: `${base}.png`, fullPage: true }).catch(() => undefined)
+    console.error(`[Login]   artifacts: ${base}.html | ${base}.png`)
+  } catch {
+    // best-effort, no relanzamos
+  }
+}
+
 export async function loginAccount(accountId: string, entityOverride?: string): Promise<boolean> {
   const { data: account } = await admin
     .from('secop_accounts')
@@ -30,10 +74,37 @@ export async function loginAccount(accountId: string, entityOverride?: string): 
     return false
   }
 
-  // Entity selection is NOT needed during login — the SECOP company selector is post-login.
-  // Company switching uses SwitchCompany?companyCode=XXX after a single login.
   const password = decrypt(account.password_encrypted)
-  console.log(`[Login] Logging in as ${account.username} (${account.name})...`)
+
+  for (let attempt = 1; attempt <= MAX_LOGIN_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      const wait = RETRY_BACKOFF_MS[attempt - 2] ?? 30_000
+      console.log(`[Login] ${account.name}: retry ${attempt}/${MAX_LOGIN_ATTEMPTS} after ${wait / 1000}s wait`)
+      await new Promise(r => setTimeout(r, wait))
+    }
+    const ok = await attemptLogin(account, password, entityOverride, attempt)
+    if (ok) return true
+  }
+
+  console.error(`[Login] ${account.name}: all ${MAX_LOGIN_ATTEMPTS} attempts failed`)
+  return false
+}
+
+async function attemptLogin(
+  account: {
+    id: string
+    name: string
+    username: string
+    password_encrypted: string
+    entity_name: string | null
+    monitored_entities: unknown
+    discovered_entities: unknown
+  },
+  password: string,
+  entityOverride: string | undefined,
+  attempt: number,
+): Promise<boolean> {
+  console.log(`[Login] Logging in as ${account.username} (${account.name}) — attempt ${attempt}/${MAX_LOGIN_ATTEMPTS}`)
 
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext()
@@ -58,7 +129,7 @@ export async function loginAccount(accountId: string, entityOverride?: string): 
         !!document.querySelector('.g-recaptcha, [data-sitekey]')
       `) as boolean
       if (captchaStillPresent) {
-        console.error('[Login] CAPTCHA required but solving failed — aborting')
+        await captureFailureArtifacts(page, account.name, attempt, 'captcha-solving-failed')
         return false
       }
     }
@@ -131,7 +202,7 @@ export async function loginAccount(accountId: string, entityOverride?: string): 
       await admin
         .from('secop_accounts')
         .update({ discovered_entities: companies.map(c => ({ name: c.name, value: c.value })) })
-        .eq('id', accountId)
+        .eq('id', account.id)
 
       // Select specific entity if override provided, otherwise first is already selected
       if (entityOverride) {
@@ -173,8 +244,8 @@ export async function loginAccount(accountId: string, entityOverride?: string): 
           return msgs.join(' | ').slice(0, 200);
         })()
       `) as string
-      console.error(`[Login] Still on login page. URL: ${finalUrl}`)
       if (errorMsg) console.error(`[Login] Visible errors: ${errorMsg}`)
+      await captureFailureArtifacts(page, account.name, attempt, 'still-on-login-after-submit')
       return false
     }
 
@@ -201,12 +272,23 @@ export async function loginAccount(accountId: string, entityOverride?: string): 
       path: c.path,
     }))
 
-    await saveSession(accountId, cookieList, 4)
+    await saveSession(account.id, cookieList, 4)
     console.log(`[Login] Saved ${cookieList.length} cookies for ${account.name}`)
 
     return true
   } catch (err) {
-    console.error(`[Login] Failed for ${account.name}:`, err instanceof Error ? err.message : err)
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(`[Login] Failed for ${account.name} (attempt ${attempt}): ${message}`)
+    // Categorize the kind of error for better logs across attempts
+    let reason = 'exception'
+    if (/Timeout.*#txtUserName/i.test(message) || /waiting for locator\('#txtUserName'\)/i.test(message)) {
+      reason = 'login-form-not-loaded'
+    } else if (/Timeout.*LoginAuthenticate/i.test(message)) {
+      reason = 'auth-response-timeout'
+    } else if (/net::|ENOTFOUND|ECONNREFUSED|ECONNRESET/i.test(message)) {
+      reason = 'network-error'
+    }
+    await captureFailureArtifacts(page, account.name, attempt, reason)
     return false
   } finally {
     await browser.close()
