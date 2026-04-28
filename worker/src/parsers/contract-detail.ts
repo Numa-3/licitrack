@@ -15,8 +15,26 @@ import type {
 
 // ── Helpers ─────────────────────────────────────────────────
 
+/**
+ * Strip noise from a node before extracting text:
+ *  - <script>/<style>: SECOP injects translator.loadFileAndTranslateElement(...) calls
+ *    next to state spans. cheerio's .text() concatenates them with the visible text,
+ *    producing e.g. "Pendiente translator.loadFileAndTranslateElement($('#spnStateSpn_0'),
+ *    '.../CO.json_v639128464126706405')". The _v... cache-buster changes between scrapes
+ *    and creates spurious diffs.
+ *  - font.DateTimeDetail / .DateTimeDetail: timezone label "((UTC-05:00) Bogotá...)"
+ *    appended to date spans. Whitespace inside this label varies between scrapes.
+ */
+function cleanText($el: cheerio.Cheerio<AnyNode>): string {
+  const clone = $el.clone()
+  clone.find('script, style, font.DateTimeDetail, .DateTimeDetail').remove()
+  return clone.text().replace(/\s+/g, ' ').trim()
+}
+
 function text($: cheerio.CheerioAPI, selector: string): string | null {
-  const t = $(selector).first().text().trim()
+  const el = $(selector).first()
+  if (el.length === 0) return null
+  const t = cleanText(el)
   return t || null
 }
 
@@ -62,21 +80,9 @@ export function parseCondiciones(html: string): Condiciones {
   }
 }
 
-/**
- * Extract a date value from SECOP's VortalDateBox span.
- * These spans contain the date plus a timezone suffix in a nested <font class="DateTimeDetail">.
- * Example: "25/06/2025 12:00:00 PM <font>((UTC-05:00) Bogotá, Lima, Quito)</font>"
- * We want just "25/06/2025 12:00:00 PM".
- */
-function extractDateText($: cheerio.CheerioAPI, selector: string): string | null {
-  const el = $(selector).first()
-  if (el.length === 0) return null
-  // Get text, remove nested font.DateTimeDetail content (timezone label)
-  const clone = el.clone()
-  clone.find('font.DateTimeDetail, .DateTimeDetail').remove()
-  const v = clone.text().trim()
-  return v || null
-}
+// extractDateText: kept as alias of `text` so existing callers stay readable.
+// `text` already strips font.DateTimeDetail / scripts via cleanText.
+const extractDateText = text
 
 /**
  * Extract garantía requirements from "Configuración financiera - Garantías".
@@ -176,10 +182,7 @@ function tryParseWarrantyRow($: cheerio.CheerioAPI, $row: cheerio.Cheerio<AnyNod
   const getCell = (offset: number): string | null => {
     const idx = idCellIndex + offset
     if (idx < 0 || idx >= cells.length) return null
-    // Strip timezone suffixes like "(UTC-05:00) Bogotá..."
-    const clone = $(cells[idx]).clone()
-    clone.find('font.DateTimeDetail, .DateTimeDetail').remove()
-    const v = clone.text().replace(/\s+/g, ' ').trim()
+    const v = cleanText($(cells[idx]))
     return v || null
   }
 
