@@ -1,5 +1,16 @@
 import { createHash } from 'crypto'
-import { cleanDateString } from './utils/date-format.js'
+import { cleanDateString, extractCanonicalDate } from './utils/date-format.js'
+
+/**
+ * Normaliza nombres de documentos para comparación: trim, lowercase, colapsa
+ * whitespace consecutivo. SECOP a veces re-renderiza el mismo doc con
+ * diferencias cosméticas entre scrapes (espacios extra al final, una letra
+ * en case distinto), lo que hace que `Set.has(name)` no encuentre match y
+ * el doc sea reportado como nuevo aunque el count antes/después sea igual.
+ */
+function normDocName(s: string | null | undefined): string {
+  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -193,17 +204,20 @@ export function diffSnapshots(
   }
 
   // 3. Fechas clave
-  if (
-    before.info_general.fecha_fin
-    && after.info_general.fecha_fin
-    && before.info_general.fecha_fin !== after.info_general.fecha_fin
-  ) {
+  // Comparar sobre la fecha NORMALIZADA, no el string crudo. SECOP envuelve
+  // la fecha en "X días de tiempo transcurrido (...)" donde X cambia cada
+  // día — comparar el crudo daba false positives todos los ciclos. Además,
+  // si una de las dos no se puede parsear (parser flicker), tampoco
+  // reportamos: probable bug de renderizado parcial, no un cambio real.
+  const beforeFecha = extractCanonicalDate(before.info_general.fecha_fin)
+  const afterFecha = extractCanonicalDate(after.info_general.fecha_fin)
+  if (beforeFecha && afterFecha && beforeFecha !== afterFecha) {
     changes.push({
       change_type: 'end_date_changed',
       priority: 'high',
       before_json: { fecha_fin: before.info_general.fecha_fin },
       after_json: { fecha_fin: after.info_general.fecha_fin },
-      summary: `Fecha fin: ${cleanDateString(before.info_general.fecha_fin)} → ${cleanDateString(after.info_general.fecha_fin)}`,
+      summary: `Fecha fin: ${beforeFecha} → ${afterFecha}`,
     })
   }
 
@@ -242,11 +256,13 @@ export function diffSnapshots(
   // 6. New documents del contrato (Tab 5)
   // Skip si antes no había docs (onboarding) o si after está vacío pero before
   // tenía (probablemente scrape fallido — página de 9807 bytes).
+  // Normalizamos el nombre antes de comparar — SECOP a veces re-renderiza el
+  // mismo doc con whitespace o case distinto, lo que daba new_document falso.
   if (before.docs_contrato.documents.length > 0 && after.docs_contrato.documents.length > 0) {
     const beforeCount = before.docs_contrato.documents.length
     const afterCount = after.docs_contrato.documents.length
-    const beforeDocNames = new Set(before.docs_contrato.documents.map(d => d.name))
-    const newDocs = after.docs_contrato.documents.filter(d => !beforeDocNames.has(d.name))
+    const beforeDocNames = new Set(before.docs_contrato.documents.map(d => normDocName(d.name)))
+    const newDocs = after.docs_contrato.documents.filter(d => !beforeDocNames.has(normDocName(d.name)))
     for (const doc of newDocs) {
       changes.push({
         change_type: 'new_document',
@@ -259,13 +275,15 @@ export function diffSnapshots(
   }
 
   // 7. Documentos del proveedor (Tab 4) — add/remove
+  // Normalizamos para comparación pero conservamos el name original en el
+  // summary (mostrar lowercase quedaría feo).
   if (before.docs_proveedor.document_names.length > 0 && after.docs_proveedor.document_names.length > 0) {
     const beforeCount = before.docs_proveedor.document_names.length
     const afterCount = after.docs_proveedor.document_names.length
-    const beforeProvDocs = new Set(before.docs_proveedor.document_names)
-    const afterProvDocs = new Set(after.docs_proveedor.document_names)
-    for (const name of afterProvDocs) {
-      if (!beforeProvDocs.has(name)) {
+    const beforeProvDocsNorm = new Set(before.docs_proveedor.document_names.map(normDocName))
+    const afterProvDocsNorm = new Set(after.docs_proveedor.document_names.map(normDocName))
+    for (const name of after.docs_proveedor.document_names) {
+      if (!beforeProvDocsNorm.has(normDocName(name))) {
         changes.push({
           change_type: 'provider_doc_added',
           priority: 'medium',
@@ -275,8 +293,8 @@ export function diffSnapshots(
         })
       }
     }
-    for (const name of beforeProvDocs) {
-      if (!afterProvDocs.has(name)) {
+    for (const name of before.docs_proveedor.document_names) {
+      if (!afterProvDocsNorm.has(normDocName(name))) {
         changes.push({
           change_type: 'provider_doc_removed',
           priority: 'medium',
@@ -292,9 +310,9 @@ export function diffSnapshots(
   if (before.ejecucion.execution_docs.length > 0 && after.ejecucion.execution_docs.length > 0) {
     const beforeCount = before.ejecucion.execution_docs.length
     const afterCount = after.ejecucion.execution_docs.length
-    const beforeExecDocs = new Set(before.ejecucion.execution_docs)
+    const beforeExecDocs = new Set(before.ejecucion.execution_docs.map(normDocName))
     for (const name of after.ejecucion.execution_docs) {
-      if (!beforeExecDocs.has(name)) {
+      if (!beforeExecDocs.has(normDocName(name))) {
         changes.push({
           change_type: 'execution_doc_added',
           priority: 'medium',

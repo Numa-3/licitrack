@@ -63,3 +63,18 @@ function formatParts(p: Parts): string {
   const mi = String(p.mi).padStart(2, '0')
   return `${dd}/${mm}/${yyyy} ${hh}:${mi}`
 }
+
+/**
+ * Extract a canonical date string suitable for === comparison in diff logic.
+ * Returns null if no parseable date can be found.
+ *
+ * Use esto en vez de comparar strings crudos: SECOP serve fechas con prefijo
+ * dinámico tipo "X días de tiempo transcurrido (15/04/2026 11:59 AM ...)" y
+ * el "X" cambia cada día → comparar el string crudo da false positives todos
+ * los ciclos. Esta función reusa la regex de cleanDateString para sacar solo
+ * la fecha real, ignorando todo lo demás.
+ */
+export function extractCanonicalDate(raw: string | null | undefined): string | null {
+  const cleaned = cleanDateString(raw)
+  return cleaned === 'fecha desconocida' ? null : cleaned
+}
