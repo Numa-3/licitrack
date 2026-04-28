@@ -7,6 +7,8 @@ import { getValidSession } from './session.js'
 import { discoverProcesses } from './discovery.js'
 import { runMonitorCycle } from './monitor.js'
 import { runPrecontractualMonitorCycle, monitorOneNow } from './precontractual/monitor.js'
+import { sendPendingNotifications } from './telegram/sender.js'
+import { pollSetupCommands } from './telegram/poller.js'
 
 /**
  * Main entry point for the SECOP worker.
@@ -145,6 +147,18 @@ function startPollingLoop() {
         await bootstrapNewPrecontractual()
       } catch (err) {
         console.error('[Poll] Precontractual bootstrap failed:',
+          err instanceof Error ? err.message : err)
+      }
+      try {
+        await pollSetupCommands()
+      } catch (err) {
+        console.error('[Poll] Telegram setup poller failed:',
+          err instanceof Error ? err.message : err)
+      }
+      try {
+        await sendPendingNotifications()
+      } catch (err) {
+        console.error('[Poll] Telegram sender failed:',
           err instanceof Error ? err.message : err)
       } finally {
         pollRunning = false

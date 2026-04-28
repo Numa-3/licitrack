@@ -23,6 +23,7 @@ import {
   Menu,
   ChevronRight,
   Bell,
+  Send,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -69,6 +70,7 @@ const navSections: NavSection[] = [
     label: 'Sistema',
     items: [
       { href: '/activity', label: 'Actividad', icon: Activity },
+      { href: '/settings/telegram', label: 'Telegram', icon: Send },
     ],
   },
 ]

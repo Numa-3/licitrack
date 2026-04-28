@@ -13,6 +13,8 @@ export const config = {
   encryptionKey: requireEnv('SECOP_ENCRYPTION_KEY'),
   monitorIntervalMs: Number(process.env.MONITOR_INTERVAL_MS) || 3_600_000,
   delayBetweenRequestsMs: Number(process.env.DELAY_BETWEEN_REQUESTS_MS) || 3_000,
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  appBaseUrl: process.env.APP_BASE_URL || 'https://licitrackk.vercel.app',
 } as const
 
 export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36'
