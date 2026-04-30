@@ -1,5 +1,4 @@
 import { existsSync } from 'fs'
-import cron from 'node-cron'
 import { admin } from './db.js'
 import { config } from './config.js'
 import { loginAccount } from './login.js'
@@ -22,20 +21,40 @@ import { pollSetupCommands } from './telegram/poller.js'
  *   npx tsx src/index.ts          # Run once
  *   npx tsx src/index.ts --loop   # Run continuously on cron schedule
  *
- * Loop mode schedules (Colombia TZ, UTC-5):
- *   • 5 full cycles/día via node-cron: 06:00, 12:00, 17:00, 22:00, 03:00
- *   • Polling cada 30s para sync requests + bootstrap de procesos nuevos
+ * Loop mode (Colombia TZ, UTC-5):
+ *   • 5 ciclos/día: 06:00, 12:00, 17:00, 22:00, 03:00
+ *   • Polling cada 30s — chequea horarios + sync requests + bootstrap de procesos nuevos
  *   • Un ciclo de arranque al iniciar el servicio
+ *   • Self-exit a las MAX_UPTIME_HOURS para forzar reinicio limpio (anti-zombie)
+ *
+ * IMPORTANTE: NO usamos node-cron. Usa cadenas de setTimeout que se rompen
+ * silenciosamente cuando hay handles colgados (sockets keepalive, browsers
+ * Playwright). En su lugar, el polling cada 30s chequea contra los horarios
+ * y dispara el ciclo cuando hace match. Más simple, más robusto.
  */
 
-const COLOMBIA_TZ = 'America/Bogota'
-const CRON_SCHEDULES: { cron: string; label: string }[] = [
-  { cron: '0 6 * * *',  label: '06:00 AM' },
-  { cron: '0 12 * * *', label: '12:00 PM' },
-  { cron: '0 17 * * *', label: '05:00 PM' },
-  { cron: '0 22 * * *', label: '10:00 PM' },
-  { cron: '0 3 * * *',  label: '03:00 AM' },
+type ScheduleSlot = { hour: number; minute: number; label: string }
+
+const SCHEDULES: ScheduleSlot[] = [
+  { hour: 6,  minute: 0, label: '06:00 AM' },
+  { hour: 12, minute: 0, label: '12:00 PM' },
+  { hour: 17, minute: 0, label: '05:00 PM' },
+  { hour: 22, minute: 0, label: '10:00 PM' },
+  { hour: 3,  minute: 0, label: '03:00 AM' },
 ]
+
+// Self-restart cada N horas. NSSM reinicia el servicio automáticamente.
+// Esto previene que un proceso quede zombie por leaks acumulados (handles
+// de Playwright, sockets, etc) y nos garantiza al menos un ciclo cada
+// MAX_UPTIME_HOURS aunque todo lo demás falle.
+const MAX_UPTIME_HOURS = 4
+const PROCESS_START = Date.now()
+
+// Tracker para no disparar el mismo slot dos veces en el mismo día.
+// Clave: "YYYY-MM-DD-<label>" en hora Bogotá. Como el proceso se reinicia
+// cada MAX_UPTIME_HOURS, el set nunca crece más de ~5 entradas — no hace
+// falta TTL ni cleanup.
+const firedSlotKeys = new Set<string>()
 
 // Flag para evitar que un schedule pise un ciclo en curso
 let cycleRunning = false
@@ -102,24 +121,93 @@ async function main() {
     return
   }
 
-  // Loop mode: register cron schedules + startup cycle + polling loop
-  console.log('[Worker] Registering cron schedules (timezone: America/Bogota)')
-  for (const s of CRON_SCHEDULES) {
-    cron.schedule(s.cron, () => {
-      void tryRunFullCycle(`scheduled ${s.label}`)
-    }, { timezone: COLOMBIA_TZ })
-    console.log(`  • ${s.cron} → ${s.label}`)
+  // Loop mode: log schedules + startup cycle + polling loop con scheduler integrado
+  console.log('[Worker] Schedules (America/Bogota):')
+  for (const s of SCHEDULES) {
+    console.log(`  • ${String(s.hour).padStart(2, '0')}:${String(s.minute).padStart(2, '0')} → ${s.label}`)
   }
+  console.log(`[Worker] Self-restart después de ${MAX_UPTIME_HOURS}h uptime (NSSM reinicia)`)
   console.log()
 
   // Run once on startup so we don't wait hours for the first scheduled tick
   void tryRunFullCycle('startup')
 
-  // Polling loop for sync requests + bootstrap (independent of main cycles)
+  // Polling loop chequea horarios + sync requests + bootstrap + telegram + watchdog
   startPollingLoop()
 
-  // Keep process alive forever — cron will dispatch cycles; polling dispatches fast tasks
+  // Keep process alive forever — el polling dispara ciclos y mantiene el loop activo
   await new Promise<void>(() => {})
+}
+
+/**
+ * Devuelve hora/minuto/fecha actual en America/Bogota usando Intl.DateTimeFormat —
+ * no depende de la TZ del sistema (Windows server suele estar en UTC).
+ */
+function nowInBogota(): { hour: number; minute: number; dateStr: string } {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Bogota',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+  const parts = fmt.formatToParts(new Date())
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+  let hour = parseInt(get('hour'), 10)
+  if (hour === 24) hour = 0 // hour12: false en algunos engines devuelve "24" para medianoche
+  const minute = parseInt(get('minute'), 10)
+  const dateStr = `${get('year')}-${get('month')}-${get('day')}`
+  return { hour, minute, dateStr }
+}
+
+/**
+ * Chequea si la hora actual matchea algún slot. Ventana de tolerancia de 5 min
+ * desde el horario nominal — con polling cada 30s, tenemos hasta 10 chances
+ * de capturar el slot. Set per-slot para no doble-disparar el mismo día.
+ */
+const SLOT_TOLERANCE_MIN = 5
+
+function checkSchedules() {
+  const { hour, minute, dateStr } = nowInBogota()
+
+  for (const s of SCHEDULES) {
+    if (hour !== s.hour) continue
+    if (minute < s.minute || minute >= s.minute + SLOT_TOLERANCE_MIN) continue
+
+    const key = `${dateStr}-${s.label}`
+    if (firedSlotKeys.has(key)) return // ya disparamos este slot hoy
+    firedSlotKeys.add(key)
+    void tryRunFullCycle(`scheduled ${s.label}`)
+    return
+  }
+}
+
+/**
+ * Si el proceso lleva más de MAX_UPTIME_HOURS, salimos limpiamente.
+ * NSSM reinicia el servicio. Esto previene zombies por leaks acumulados.
+ * NO matamos un ciclo en curso — esperamos a que termine.
+ */
+function checkMaxUptime() {
+  const uptimeMs = Date.now() - PROCESS_START
+  if (uptimeMs < MAX_UPTIME_HOURS * 60 * 60 * 1000) return
+  if (cycleRunning) {
+    // Esperamos a que termine el ciclo en curso antes de reiniciar
+    return
+  }
+  console.log(`[Worker] Max uptime ${MAX_UPTIME_HOURS}h alcanzado — saliendo para reinicio limpio`)
+  process.exit(0)
+}
+
+/**
+ * Heartbeat periódico para que el log muestre signos de vida cuando el
+ * worker está idle. Si dejamos de ver heartbeats, el event loop se colgó.
+ */
+let lastHeartbeatLog = 0
+function heartbeatTick() {
+  const now = Date.now()
+  if (now - lastHeartbeatLog < 5 * 60 * 1000) return
+  lastHeartbeatLog = now
+  const uptimeMin = Math.floor((now - PROCESS_START) / 60000)
+  const { hour, minute } = nowInBogota()
+  console.log(`[Worker] alive · uptime ${uptimeMin}min · ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} Bogotá`)
 }
 
 // Flag para que dos ticks de polling no corran en paralelo. Sin esto, si un
@@ -131,9 +219,21 @@ let pollRunning = false
 
 function startPollingLoop() {
   const POLL_INTERVAL_MS = 30_000
-  console.log(`[Worker] Polling loop every ${POLL_INTERVAL_MS / 1000}s for sync + bootstrap`)
+  console.log(`[Worker] Polling loop every ${POLL_INTERVAL_MS / 1000}s — schedules, sync, bootstrap, telegram, watchdog`)
 
   setInterval(() => {
+    // 1. Heartbeat (siempre) — para ver signos de vida en log idle
+    try { heartbeatTick() } catch {}
+
+    // 2. Watchdog max-uptime (siempre) — exit si pasamos el límite
+    try { checkMaxUptime() } catch {}
+
+    // 3. Scheduler de ciclos completos (siempre — tryRunFullCycle ya tiene guard interno)
+    try { checkSchedules() } catch (err) {
+      console.error('[Poll] Schedule check failed:', err instanceof Error ? err.message : err)
+    }
+
+    // 4. Sync + bootstrap + telegram — solo si no hay ciclo grande corriendo
     if (cycleRunning || pollRunning) return
     pollRunning = true
 

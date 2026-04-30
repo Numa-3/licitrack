@@ -39,12 +39,20 @@ export async function sendPendingNotifications(): Promise<{ sent: number; failed
   const processIds = Array.from(new Set(pending.map(n => n.process_id).filter(Boolean))) as string[]
   const processMap = new Map<string, ProcessInfo>()
   if (processIds.length > 0) {
-    const { data: processes } = await admin
+    const { data: processes, error: procError } = await admin
       .from('secop_processes')
-      .select('id, numero, nombre_personalizado, objeto, entidad')
+      .select('id, secop_process_id, custom_name, objeto, entidad')
       .in('id', processIds)
+    if (procError) {
+      console.error('[Telegram] Error fetching process info:', procError.message)
+    }
     for (const p of processes ?? []) {
-      processMap.set(p.id, p)
+      processMap.set(p.id, {
+        numero: p.secop_process_id,
+        nombre_personalizado: p.custom_name,
+        objeto: p.objeto,
+        entidad: p.entidad,
+      })
     }
   }
 
