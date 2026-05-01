@@ -123,53 +123,71 @@ export default function DetailPanel({ process: p, onClose, onRename, canEdit }: 
             )}
           </div>
 
-          {/* Source + monitoring status */}
+          {/* Source badge */}
           <div className="flex items-center gap-2 flex-wrap">
             <SourceBadge source={p.source} />
-            {p.last_monitored_at && (
-              <span className="text-[10px] text-gray-400">
-                Revisado {timeAgo(p.last_monitored_at)}
-              </span>
-            )}
           </div>
 
-          {/* Snapshot comparison */}
-          {lastSnapshot && (
-            <div className="bg-gray-50 rounded-lg border border-[#EAEAEA] p-3 space-y-2">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Ultima comparacion</label>
-              <div className="flex items-center gap-3">
-                <span className={`w-2 h-2 rounded-full ${snapshotMatch ? 'bg-green-500' : 'bg-amber-500'}`} />
+          {/* Estado de monitoreo */}
+          <div className="bg-gray-50 rounded-lg border border-[#EAEAEA] p-3 space-y-3">
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Estado de monitoreo</label>
+
+            {/* Última verificación del worker — siempre visible si hay last_monitored_at */}
+            {p.last_monitored_at && (
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[11px] text-gray-500">Última verificación</span>
                 <span className="text-xs text-gray-700 font-medium">
-                  {snapshotMatch ? 'Sin cambios' : 'Cambios detectados'}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div>
-                  <p className="text-gray-400">Ultima revision</p>
-                  <p className="text-gray-700 font-medium">
-                    {new Date(lastSnapshot.captured_at).toLocaleString('es-CO', {
+                  {timeAgo(p.last_monitored_at)}
+                  <span className="text-gray-400 font-normal">
+                    {' · '}
+                    {new Date(p.last_monitored_at).toLocaleString('es-CO', {
                       day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
                     })}
-                  </p>
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {/* Resultado del último diff entre snapshots */}
+            {lastSnapshot && (
+              <>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] text-gray-500">Último cambio</span>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                    <span className={`w-1.5 h-1.5 rounded-full ${snapshotMatch ? 'bg-green-500' : 'bg-amber-500'}`} />
+                    <span className="text-gray-700">
+                      {snapshotMatch
+                        ? 'Sin cambios desde el último snapshot'
+                        : 'Cambios detectados'}
+                    </span>
+                  </span>
                 </div>
-                {prevSnapshot && (
-                  <div>
-                    <p className="text-gray-400">Comparada contra</p>
-                    <p className="text-gray-700 font-medium">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] text-gray-500">Snapshot vigente</span>
+                  <span className="text-xs text-gray-700 font-medium">
+                    {new Date(lastSnapshot.captured_at).toLocaleString('es-CO', {
+                      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                    })}
+                  </span>
+                </div>
+                {prevSnapshot && lastSnapshot.captured_at !== prevSnapshot.captured_at && (
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] text-gray-500">Snapshot anterior</span>
+                    <span className="text-xs text-gray-700 font-medium">
                       {new Date(prevSnapshot.captured_at).toLocaleString('es-CO', {
-                        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+                        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
                       })}
-                    </p>
+                    </span>
                   </div>
                 )}
-              </div>
-              {prevSnapshot && (
-                <p className="text-[10px] text-gray-400">
-                  Intervalo: {Math.round((new Date(lastSnapshot.captured_at).getTime() - new Date(prevSnapshot.captured_at).getTime()) / 60000)} min
-                </p>
-              )}
-            </div>
-          )}
+              </>
+            )}
+
+            <p className="text-[10px] text-gray-400 leading-relaxed pt-1 border-t border-gray-200">
+              El worker revisa cada ciclo. Solo guarda un snapshot nuevo si SECOP cambia algo —
+              si no, la fecha del snapshot vigente se mantiene aunque siga monitoreando.
+            </p>
+          </div>
 
           {/* Entity */}
           <div>
