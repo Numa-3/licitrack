@@ -184,8 +184,17 @@ async function monitorOneProcess(
   const snapshotHash = hashPrecontractualSnapshot(snapshot)
 
   if (latest?.hash === snapshotHash) {
+    // Aunque el snapshot no cambió, recalculamos next_deadline porque depende
+    // de Date.now() — eventos que eran futuros ayer pueden ser pasado hoy.
+    // Sin esto, el "Próximo deadline" del UI queda anclado a la fecha vieja
+    // y muestra eventos ya vencidos hasta que SECOP cambie algo.
+    const { deadline, label } = findNextDeadline(snapshot)
     await admin.from('secop_processes')
-      .update({ last_monitored_at: new Date().toISOString() })
+      .update({
+        last_monitored_at: new Date().toISOString(),
+        next_deadline: deadline,
+        next_deadline_label: label,
+      })
       .eq('id', proc.id)
     return { changesFound: 0 }
   }
