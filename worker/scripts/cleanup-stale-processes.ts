@@ -1,15 +1,17 @@
 /**
- * Cleanup: hard delete de procesos viejos con monitoring_enabled=false.
+ * Cleanup: hard delete de procesos con monitoring_enabled=false.
  *
- * Filtra procesos que cumplen ambas:
+ * Modo default — filtra por antigüedad:
  *   1. monitoring_enabled = false
  *   2. last_monitored_at < (hoy - STALE_DAYS) ó (last_monitored_at IS NULL Y created_at < cutoff)
  *
- * El segundo OR captura procesos que nunca se monitorearon (basura del descubrimiento
- * inicial), siempre que sean lo bastante viejos como para no estar en uso reciente.
+ * Modo --all — sin filtro de antigüedad, borra TODOS los desactivados.
+ * Útil cuando los procesos vienen de discovery (account/radar) y se re-insertan
+ * automáticamente si vuelven a aparecer en SECOP.
  *
  * Default es DRY-RUN: imprime la lista sin tocar nada. Para borrar de verdad:
- *   npx tsx scripts/cleanup-stale-processes.ts --confirm
+ *   npx tsx scripts/cleanup-stale-processes.ts --confirm           # filtro 90 días
+ *   npx tsx scripts/cleanup-stale-processes.ts --all --confirm     # sin filtro
  *
  * El borrado en `secop_processes` propaga vía FK ON DELETE CASCADE a
  * `secop_process_snapshots`, `secop_process_changes` y `notifications`.
@@ -18,6 +20,7 @@ import { admin } from '../src/db.js'
 
 const STALE_DAYS = 90 // 3 meses
 const DRY_RUN = !process.argv.includes('--confirm')
+const NO_AGE_FILTER = process.argv.includes('--all')
 
 type Candidate = {
   id: string
@@ -33,20 +36,28 @@ async function main() {
   const cutoffMs = Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000
   const cutoff = new Date(cutoffMs).toISOString()
 
-  console.log(`═══ Cleanup procesos stale ═══`)
-  console.log(`Cutoff: ${cutoff} (hace ${STALE_DAYS} días)`)
+  console.log(`═══ Cleanup procesos con monitoring_enabled=false ═══`)
+  if (NO_AGE_FILTER) {
+    console.log(`Filtro: --all (sin cutoff de antigüedad — borra todos los desactivados)`)
+  } else {
+    console.log(`Filtro: cutoff ${cutoff} (hace ${STALE_DAYS} días)`)
+  }
   console.log(`Modo: ${DRY_RUN ? 'DRY-RUN (no borra nada)' : 'CONFIRM (borrado real)'}`)
   console.log()
 
-  // PostgREST .or() con and() anidado:
-  //   last_monitored_at < cutoff   OR   (last_monitored_at IS NULL AND created_at < cutoff)
-  const orFilter = `last_monitored_at.lt.${cutoff},and(last_monitored_at.is.null,created_at.lt.${cutoff})`
-
-  const { data: candidates, error } = await admin
+  let query = admin
     .from('secop_processes')
     .select('id, secop_process_id, custom_name, objeto, entidad, last_monitored_at, created_at')
     .eq('monitoring_enabled', false)
-    .or(orFilter)
+
+  if (!NO_AGE_FILTER) {
+    // PostgREST .or() con and() anidado:
+    //   last_monitored_at < cutoff   OR   (last_monitored_at IS NULL AND created_at < cutoff)
+    const orFilter = `last_monitored_at.lt.${cutoff},and(last_monitored_at.is.null,created_at.lt.${cutoff})`
+    query = query.or(orFilter)
+  }
+
+  const { data: candidates, error } = await query
     .order('last_monitored_at', { ascending: true, nullsFirst: true })
 
   if (error) {
