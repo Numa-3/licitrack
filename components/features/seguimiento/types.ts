@@ -27,6 +27,23 @@ export type Process = {
   api_pending?: boolean
   tipo_proceso?: 'contractual' | 'precontractual'
   secop_accounts?: { name: string } | null
+  latest_note?: {
+    content: string
+    created_at: string
+    author_id: string
+  } | null
+}
+
+export type ProcessNote = {
+  id: string
+  process_id: string
+  content: string
+  author_id: string
+  author_email: string | null
+  created_at: string
+  deleted_at: string | null
+  deleted_by: string | null
+  deleted_by_email?: string | null
 }
 
 export type Change = {

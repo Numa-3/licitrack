@@ -37,5 +37,35 @@ export async function GET(request: Request) {
 
   if (error) return Response.json({ error: error.message }, { status: 500 })
 
-  return Response.json({ data, count })
+  // Hidratar la última nota activa por proceso (para preview en la tabla).
+  // Una sola query por todos los processIds, luego mapeamos en JS quedándonos
+  // con la más reciente por proceso. Más simple que un nested select con
+  // ordering+limit (que PostgREST no soporta limpio).
+  const processIds = (data || []).map(p => p.id)
+  const latestNoteByProcess: Record<string, { content: string; created_at: string; author_id: string }> = {}
+  if (processIds.length > 0) {
+    const { data: notes } = await supabase
+      .from('secop_process_notes')
+      .select('process_id, content, created_at, author_id')
+      .in('process_id', processIds)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+    for (const n of notes || []) {
+      // Solo nos quedamos con la primera (más reciente) por process_id
+      if (!latestNoteByProcess[n.process_id]) {
+        latestNoteByProcess[n.process_id] = {
+          content: n.content,
+          created_at: n.created_at,
+          author_id: n.author_id,
+        }
+      }
+    }
+  }
+
+  const enriched = (data || []).map(p => ({
+    ...p,
+    latest_note: latestNoteByProcess[p.id] || null,
+  }))
+
+  return Response.json({ data: enriched, count })
 }

@@ -5,7 +5,7 @@ import { formatCurrency } from '@/lib/utils/format'
 import {
   Eye, AlertTriangle, Clock, Plus, X,
   ChevronLeft, ChevronRight, Loader2,
-  ToggleLeft, ToggleRight, Bell, Activity, Trash2,
+  ToggleLeft, ToggleRight, Bell, Activity, Trash2, MessageSquare,
   type LucideIcon,
 } from 'lucide-react'
 import type { Process, Change, Account, WorkerStatus } from './seguimiento/types'
@@ -24,6 +24,7 @@ type Props = {
   initialAccounts: Account[]
   urgentCount: number
   workerStatus: WorkerStatus
+  userId: string
   userRole: string
 }
 
@@ -34,6 +35,7 @@ export default function SecopSeguimientoClient({
   initialAccounts,
   urgentCount,
   workerStatus,
+  userId,
   userRole,
 }: Props) {
   const isJefe = userRole === 'jefe'
@@ -398,6 +400,7 @@ export default function SecopSeguimientoClient({
           onClose={() => setSelected(null)}
           onRename={renameProcess}
           canEdit={isJefe}
+          currentUserId={userId}
         />
       )}
     </div>
@@ -502,6 +505,17 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
                     )}
                     {p.referencia_proceso && <span className="text-[10px] text-gray-400">{p.referencia_proceso}</span>}
                   </div>
+                  {p.latest_note && (
+                    <div className="flex items-start gap-1 mt-1.5 text-[11px] text-gray-500 italic">
+                      <MessageSquare size={11} className="mt-0.5 shrink-0 text-gray-400" />
+                      <span className="truncate">
+                        "{p.latest_note.content.length > 80
+                          ? `${p.latest_note.content.slice(0, 80).trim()}…`
+                          : p.latest_note.content}"
+                      </span>
+                      <span className="text-gray-400 shrink-0 not-italic">· {timeAgo(p.latest_note.created_at)}</span>
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3 hidden lg:table-cell">
                   <span className="text-xs text-gray-500">{p.secop_accounts?.name || '—'}</span>

@@ -4,7 +4,7 @@ import SecopSeguimientoClient from '@/components/features/SecopSeguimientoClient
 export const dynamic = 'force-dynamic'
 
 export default async function SecopSeguimientoPage() {
-  const { supabase, userRole } = await getAuthUser()
+  const { supabase, userId, userRole } = await getAuthUser()
 
   const workerLogQuery = userRole === 'jefe'
     ? supabase
@@ -52,9 +52,34 @@ export default async function SecopSeguimientoPage() {
     workerLogQuery,
   ])
 
+  // Hidratar la última nota activa por proceso para el preview en la tabla
+  const processIds = (processes || []).map(p => p.id)
+  const latestNoteByProcess: Record<string, { content: string; created_at: string; author_id: string }> = {}
+  if (processIds.length > 0) {
+    const { data: notes } = await supabase
+      .from('secop_process_notes')
+      .select('process_id, content, created_at, author_id')
+      .in('process_id', processIds)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+    for (const n of notes || []) {
+      if (!latestNoteByProcess[n.process_id]) {
+        latestNoteByProcess[n.process_id] = {
+          content: n.content,
+          created_at: n.created_at,
+          author_id: n.author_id,
+        }
+      }
+    }
+  }
+  const enrichedProcesses = (processes || []).map(p => ({
+    ...p,
+    latest_note: latestNoteByProcess[p.id] || null,
+  }))
+
   return (
     <SecopSeguimientoClient
-      initialProcesses={processes || []}
+      initialProcesses={enrichedProcesses}
       initialCount={count || 0}
       initialChanges={recentChanges || []}
       initialAccounts={accounts || []}
@@ -65,6 +90,7 @@ export default async function SecopSeguimientoPage() {
         processes_checked: number
         changes_found: number
       } | null}
+      userId={userId}
       userRole={userRole}
     />
   )

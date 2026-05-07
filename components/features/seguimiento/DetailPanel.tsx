@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, ExternalLink, Loader2, Calendar, Pencil, Check, X as XIcon } from 'lucide-react'
+import { X, ExternalLink, Loader2, Calendar, Pencil, Check, X as XIcon, Trash2, MessageSquare, Send } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils/format'
-import type { Process, Change, CronogramaEvent } from './types'
+import type { Process, Change, CronogramaEvent, ProcessNote } from './types'
 import { timeAgo } from './helpers'
 
 type SnapshotInfo = {
@@ -13,11 +13,12 @@ type SnapshotInfo = {
   source_type: string
 }
 
-export default function DetailPanel({ process: p, onClose, onRename, canEdit }: {
+export default function DetailPanel({ process: p, onClose, onRename, canEdit, currentUserId }: {
   process: Process
   onClose: () => void
   onRename?: (id: string, name: string | null) => Promise<void>
-  canEdit?: boolean
+  canEdit?: boolean // true for jefe — gates "ver eliminadas" toggle on notes
+  currentUserId?: string | null
 }) {
   const [cronograma, setCronograma] = useState<CronogramaEvent[] | null>(null)
   const [changes, setChanges] = useState<Change[] | null>(null)
@@ -28,20 +29,66 @@ export default function DetailPanel({ process: p, onClose, onRename, canEdit }: 
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(p.custom_name ?? '')
   const [savingName, setSavingName] = useState(false)
+  const [notes, setNotes] = useState<ProcessNote[] | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [postingNote, setPostingNote] = useState(false)
+  const [showDeletedNotes, setShowDeletedNotes] = useState(false)
 
   useEffect(() => {
     setLoadingData(true)
+    const includeDeleted = canEdit && showDeletedNotes ? '?include_deleted=true' : ''
     Promise.all([
       fetch(`/api/secop/processes/${p.id}/cronograma`).then(r => r.json()),
       fetch(`/api/secop/processes/${p.id}/changes?limit=10`).then(r => r.json()),
-    ]).then(([cronoData, changesData]) => {
+      fetch(`/api/secop/processes/${p.id}/notes${includeDeleted}`).then(r => r.json()),
+    ]).then(([cronoData, changesData, notesData]) => {
       setCronograma(cronoData.cronograma || [])
       setChanges(changesData.data || [])
       setLastSnapshot(changesData.last_snapshot || null)
       setPrevSnapshot(changesData.prev_snapshot || null)
       setSnapshotMatch(changesData.snapshot_match ?? null)
+      setNotes(notesData.data || [])
     }).finally(() => setLoadingData(false))
-  }, [p.id])
+  }, [p.id, canEdit, showDeletedNotes])
+
+  const postNote = async () => {
+    const content = noteDraft.trim()
+    if (!content) return
+    setPostingNote(true)
+    try {
+      const res = await fetch(`/api/secop/processes/${p.id}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        alert(json.error || 'Error al publicar la nota')
+        return
+      }
+      // Optimistic prepend (la API ya devuelve la fila completa hidratada)
+      setNotes(prev => prev ? [json.data, ...prev] : [json.data])
+      setNoteDraft('')
+    } finally {
+      setPostingNote(false)
+    }
+  }
+
+  const deleteNote = async (noteId: string) => {
+    if (!confirm('¿Eliminar esta nota? Quedará archivada — los jefes pueden auditar las eliminadas.')) return
+    const prev = notes
+    // Optimistic: marcar como deleted localmente
+    setNotes(ns => ns?.map(n =>
+      n.id === noteId
+        ? { ...n, deleted_at: new Date().toISOString(), deleted_by: currentUserId || null }
+        : n,
+    ) ?? null)
+    const res = await fetch(`/api/secop/processes/${p.id}/notes/${noteId}`, { method: 'DELETE' })
+    if (!res.ok) {
+      setNotes(prev)
+      alert('Error al eliminar la nota')
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
@@ -258,8 +305,141 @@ export default function DetailPanel({ process: p, onClose, onRename, canEdit }: 
               </div>
             )}
           </div>
+
+          {/* Notas del equipo */}
+          <NotesSection
+            notes={notes}
+            noteDraft={noteDraft}
+            setNoteDraft={setNoteDraft}
+            postingNote={postingNote}
+            onPost={postNote}
+            onDelete={deleteNote}
+            currentUserId={currentUserId}
+            canSeeDeleted={!!canEdit}
+            showDeleted={showDeletedNotes}
+            setShowDeleted={setShowDeletedNotes}
+          />
         </div>
       </div>
+    </div>
+  )
+}
+
+function NotesSection({
+  notes, noteDraft, setNoteDraft, postingNote, onPost, onDelete,
+  currentUserId, canSeeDeleted, showDeleted, setShowDeleted,
+}: {
+  notes: ProcessNote[] | null
+  noteDraft: string
+  setNoteDraft: (s: string) => void
+  postingNote: boolean
+  onPost: () => Promise<void>
+  onDelete: (noteId: string) => Promise<void>
+  currentUserId?: string | null
+  canSeeDeleted: boolean
+  showDeleted: boolean
+  setShowDeleted: (b: boolean) => void
+}) {
+  const visibleNotes = (notes || []).filter(n => showDeleted || !n.deleted_at)
+  const deletedCount = (notes || []).filter(n => n.deleted_at).length
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <label className="text-xs font-semibold uppercase tracking-widest text-gray-500 flex items-center gap-1.5">
+          <MessageSquare size={12} />
+          Notas del equipo
+        </label>
+        {canSeeDeleted && deletedCount > 0 && (
+          <button onClick={() => setShowDeleted(!showDeleted)}
+            className="text-[10px] text-gray-500 hover:text-gray-700 underline">
+            {showDeleted ? 'Ocultar eliminadas' : `Ver eliminadas (${deletedCount})`}
+          </button>
+        )}
+      </div>
+
+      {/* Caja de input */}
+      <div className="mb-3 flex flex-col gap-2">
+        <textarea
+          value={noteDraft}
+          onChange={e => setNoteDraft(e.target.value)}
+          placeholder="Agregar nota… (ej: 'esperando que nos acepten la póliza')"
+          maxLength={2000}
+          rows={2}
+          className="w-full px-2.5 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+          onKeyDown={e => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void onPost() }
+          }}
+        />
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-gray-400">
+            {noteDraft.length > 0 && `${noteDraft.length}/2000`}
+            {noteDraft.length === 0 && '⌘+Enter para publicar'}
+          </span>
+          <button
+            onClick={() => void onPost()}
+            disabled={postingNote || !noteDraft.trim()}
+            className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-white bg-gray-900 hover:bg-gray-800 rounded-md disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {postingNote ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+            Publicar
+          </button>
+        </div>
+      </div>
+
+      {/* Lista de notas */}
+      {!notes ? (
+        <div className="flex justify-center py-2"><Loader2 size={14} className="animate-spin text-gray-400" /></div>
+      ) : visibleNotes.length === 0 ? (
+        <p className="text-xs text-gray-400">Sin notas todavía. Agrega la primera para que el equipo se entere de en qué va este proceso.</p>
+      ) : (
+        <div className="space-y-2.5">
+          {visibleNotes.map(n => (
+            <NoteRow key={n.id} note={n} currentUserId={currentUserId} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NoteRow({ note, currentUserId, onDelete }: {
+  note: ProcessNote
+  currentUserId?: string | null
+  onDelete: (id: string) => Promise<void>
+}) {
+  const isDeleted = !!note.deleted_at
+  const authorLabel = note.author_email
+    ? note.author_email.split('@')[0]
+    : 'Usuario'
+
+  return (
+    <div className={`rounded-lg border p-2.5 ${isDeleted ? 'border-gray-200 bg-gray-50/40 opacity-60' : 'border-[#EAEAEA] bg-white'}`}>
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <div className="text-[10px] text-gray-500 flex items-baseline gap-1.5 flex-wrap">
+          <span className="font-medium text-gray-700">{authorLabel}</span>
+          <span>·</span>
+          <span>{timeAgo(note.created_at)}</span>
+          {isDeleted && (
+            <>
+              <span>·</span>
+              <span className="text-red-600">
+                eliminada{note.deleted_by_email ? ` por ${note.deleted_by_email.split('@')[0]}` : ''}
+              </span>
+            </>
+          )}
+        </div>
+        {!isDeleted && (
+          <button onClick={() => void onDelete(note.id)}
+            title="Eliminar nota"
+            className="p-0.5 text-gray-300 hover:text-red-600 transition-colors">
+            <Trash2 size={12} />
+          </button>
+        )}
+      </div>
+      <p className={`text-xs whitespace-pre-wrap break-words ${isDeleted ? 'text-gray-500 line-through' : 'text-gray-700'}`}>
+        {note.content}
+      </p>
     </div>
   )
 }
