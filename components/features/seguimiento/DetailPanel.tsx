@@ -170,6 +170,20 @@ export default function DetailPanel({ process: p, onClose, onRename, canEdit, cu
             )}
           </div>
 
+          {/* Notas del equipo — arriba para acceso rápido y para ver dónde está el proceso */}
+          <NotesSection
+            notes={notes}
+            noteDraft={noteDraft}
+            setNoteDraft={setNoteDraft}
+            postingNote={postingNote}
+            onPost={postNote}
+            onDelete={deleteNote}
+            currentUserId={currentUserId}
+            canSeeDeleted={!!canEdit}
+            showDeleted={showDeletedNotes}
+            setShowDeleted={setShowDeletedNotes}
+          />
+
           {/* Source badge */}
           <div className="flex items-center gap-2 flex-wrap">
             <SourceBadge source={p.source} />
@@ -305,20 +319,6 @@ export default function DetailPanel({ process: p, onClose, onRename, canEdit, cu
               </div>
             )}
           </div>
-
-          {/* Notas del equipo */}
-          <NotesSection
-            notes={notes}
-            noteDraft={noteDraft}
-            setNoteDraft={setNoteDraft}
-            postingNote={postingNote}
-            onPost={postNote}
-            onDelete={deleteNote}
-            currentUserId={currentUserId}
-            canSeeDeleted={!!canEdit}
-            showDeleted={showDeletedNotes}
-            setShowDeleted={setShowDeletedNotes}
-          />
         </div>
       </div>
     </div>
@@ -340,60 +340,63 @@ function NotesSection({
   showDeleted: boolean
   setShowDeleted: (b: boolean) => void
 }) {
+  const activeNotes = (notes || []).filter(n => !n.deleted_at)
   const visibleNotes = (notes || []).filter(n => showDeleted || !n.deleted_at)
   const deletedCount = (notes || []).filter(n => n.deleted_at).length
 
   return (
-    <div>
+    <div className="rounded-xl border border-[#EAEAEA] bg-white p-4" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
       <div className="flex items-center justify-between mb-3">
-        <label className="text-xs font-semibold uppercase tracking-widest text-gray-500 flex items-center gap-1.5">
-          <MessageSquare size={12} />
-          Notas del equipo
-        </label>
+        <div className="flex items-center gap-2">
+          <MessageSquare size={14} className="text-indigo-600" />
+          <h3 className="text-sm font-semibold text-gray-900">Notas del equipo</h3>
+          {activeNotes.length > 0 && (
+            <span className="text-[10px] font-medium text-gray-500 bg-gray-100 rounded-full px-1.5 py-0.5">
+              {activeNotes.length}
+            </span>
+          )}
+        </div>
         {canSeeDeleted && deletedCount > 0 && (
           <button onClick={() => setShowDeleted(!showDeleted)}
-            className="text-[10px] text-gray-500 hover:text-gray-700 underline">
-            {showDeleted ? 'Ocultar eliminadas' : `Ver eliminadas (${deletedCount})`}
+            className="text-[10px] text-gray-500 hover:text-gray-700">
+            {showDeleted ? 'Ocultar eliminadas' : `Ver ${deletedCount} eliminadas`}
           </button>
         )}
       </div>
 
       {/* Caja de input */}
-      <div className="mb-3 flex flex-col gap-2">
+      <div className="relative mb-3">
         <textarea
           value={noteDraft}
           onChange={e => setNoteDraft(e.target.value)}
-          placeholder="Agregar nota… (ej: 'esperando que nos acepten la póliza')"
+          placeholder="Agregar nota… (ej: esperando que nos acepten la póliza)"
           maxLength={2000}
           rows={2}
-          className="w-full px-2.5 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+          className="w-full px-3 py-2 pr-24 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none placeholder:text-gray-400"
           onKeyDown={e => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void onPost() }
           }}
         />
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] text-gray-400">
-            {noteDraft.length > 0 && `${noteDraft.length}/2000`}
-            {noteDraft.length === 0 && '⌘+Enter para publicar'}
-          </span>
-          <button
-            onClick={() => void onPost()}
-            disabled={postingNote || !noteDraft.trim()}
-            className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-white bg-gray-900 hover:bg-gray-800 rounded-md disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {postingNote ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-            Publicar
-          </button>
-        </div>
+        <button
+          onClick={() => void onPost()}
+          disabled={postingNote || !noteDraft.trim()}
+          className="absolute right-2 bottom-2 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {postingNote ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+          Publicar
+        </button>
       </div>
+      {noteDraft.length > 0 && (
+        <p className="text-[10px] text-gray-400 -mt-1.5 mb-2">{noteDraft.length}/2000 · ⌘+Enter</p>
+      )}
 
       {/* Lista de notas */}
       {!notes ? (
-        <div className="flex justify-center py-2"><Loader2 size={14} className="animate-spin text-gray-400" /></div>
+        <div className="flex justify-center py-3"><Loader2 size={14} className="animate-spin text-gray-400" /></div>
       ) : visibleNotes.length === 0 ? (
-        <p className="text-xs text-gray-400">Sin notas todavía. Agrega la primera para que el equipo se entere de en qué va este proceso.</p>
+        <p className="text-xs text-gray-400 italic py-1">Sin notas todavía.</p>
       ) : (
-        <div className="space-y-2.5">
+        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
           {visibleNotes.map(n => (
             <NoteRow key={n.id} note={n} currentUserId={currentUserId} onDelete={onDelete} />
           ))}
@@ -403,7 +406,7 @@ function NotesSection({
   )
 }
 
-function NoteRow({ note, currentUserId, onDelete }: {
+function NoteRow({ note, currentUserId: _currentUserId, onDelete }: {
   note: ProcessNote
   currentUserId?: string | null
   onDelete: (id: string) => Promise<void>
@@ -414,16 +417,25 @@ function NoteRow({ note, currentUserId, onDelete }: {
     : 'Usuario'
 
   return (
-    <div className={`rounded-lg border p-2.5 ${isDeleted ? 'border-gray-200 bg-gray-50/40 opacity-60' : 'border-[#EAEAEA] bg-white'}`}>
-      <div className="flex items-start justify-between gap-2 mb-1">
+    <div className={`group rounded-lg p-2.5 transition-colors ${
+      isDeleted
+        ? 'bg-gray-50 opacity-60'
+        : 'bg-gray-50/60 hover:bg-gray-50'
+    }`}>
+      <p className={`text-sm whitespace-pre-wrap break-words mb-1 ${
+        isDeleted ? 'text-gray-500 line-through' : 'text-gray-800'
+      }`}>
+        {note.content}
+      </p>
+      <div className="flex items-center justify-between gap-2">
         <div className="text-[10px] text-gray-500 flex items-baseline gap-1.5 flex-wrap">
-          <span className="font-medium text-gray-700">{authorLabel}</span>
-          <span>·</span>
+          <span className="font-medium">{authorLabel}</span>
+          <span className="text-gray-300">·</span>
           <span>{timeAgo(note.created_at)}</span>
           {isDeleted && (
             <>
-              <span>·</span>
-              <span className="text-red-600">
+              <span className="text-gray-300">·</span>
+              <span className="text-red-500/80">
                 eliminada{note.deleted_by_email ? ` por ${note.deleted_by_email.split('@')[0]}` : ''}
               </span>
             </>
@@ -432,14 +444,11 @@ function NoteRow({ note, currentUserId, onDelete }: {
         {!isDeleted && (
           <button onClick={() => void onDelete(note.id)}
             title="Eliminar nota"
-            className="p-0.5 text-gray-300 hover:text-red-600 transition-colors">
+            className="p-0.5 text-gray-300 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100">
             <Trash2 size={12} />
           </button>
         )}
       </div>
-      <p className={`text-xs whitespace-pre-wrap break-words ${isDeleted ? 'text-gray-500 line-through' : 'text-gray-700'}`}>
-        {note.content}
-      </p>
     </div>
   )
 }
