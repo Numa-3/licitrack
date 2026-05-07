@@ -281,16 +281,21 @@ export function findNextDeadline(s: PrecontractualSnapshot): {
 
 /**
  * Parse dates in the formats SECOP uses:
- *   - ISO 8601: "2025-12-02T00:00:00.000"
- *   - DD/MM/YYYY H:MM:SS AM/PM: "25/06/2025 2:00:00 AM"
+ *   - DD/MM/YYYY H:MM:SS AM/PM (cronograma): "7/05/2026 5:00:00 PM"
+ *   - ISO 8601 (API datos.gov.co):           "2025-12-02T00:00:00.000"
  *
- * SECOP siempre publica las horas en UTC-05:00 (Bogotá). Construimos el ISO
- * con offset explícito para que sea independiente del TZ del worker host
- * (puede ser Windows local, Linux UTC, etc).
+ * IMPORTANTE: probamos primero la regex DD/MM/YYYY ANTES de usar new Date().
+ * V8 / JS engines aceptan strings tipo "7/05/2026" y los interpretan como
+ * MM/DD/YYYY (US format) sin marcar error: "7/05/2026" → 5 de julio 2026,
+ * NO 7 de mayo 2026. Eso destruía findNextDeadline para cualquier evento
+ * cuyo día fuera ≤ 12 (era confundible con un mes válido). Por eso el
+ * orden importa: primero matchear nuestro formato explícito, después
+ * fallback a new Date solo para ISO.
+ *
+ * SECOP publica las horas en UTC-05:00 (Bogotá). Construimos el ISO con
+ * offset explícito para que sea independiente del TZ del runtime.
  */
 function parseFlexibleDate(s: string): number {
-  const iso = new Date(s).getTime()
-  if (!isNaN(iso)) return iso
   const m = s.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})[\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/)
   if (m) {
     const [, d, mo, y, h, mi, se, ampm] = m
@@ -301,5 +306,8 @@ function parseFlexibleDate(s: string): number {
     const isoBogota = `${y}-${pad(mo)}-${pad(d)}T${pad(hour)}:${pad(mi)}:${pad(se || 0)}-05:00`
     return new Date(isoBogota).getTime()
   }
-  return NaN
+  // Fallback: ISO 8601 (datos.gov.co API). Aquí new Date sí es seguro
+  // porque el formato es inequívoco.
+  const iso = new Date(s).getTime()
+  return isNaN(iso) ? NaN : iso
 }
