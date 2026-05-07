@@ -1,7 +1,7 @@
 # LiciTrack — Backlog
 
 Fuente única de verdad para todo lo pendiente: mejoras a lo existente y features nuevas.
-Última actualización: 2026-04-27
+Última actualización: 2026-05-07
 
 ---
 
@@ -230,6 +230,40 @@ Funcionalidades que no existen todavía.
   - Centro de monitoreo `/admin/monitoreo` construido
   - Precontractual tracker probado con múltiples casos reales
 - **Workflow cuando arranquemos**: actualizar `DESIGN.md` con dirección clara → mockup por pantalla en Claude Design → iterar → exportar URL de referencia → portar a React/Tailwind
+
+#### Layout modular en Seguimiento (vista principal y panel de detalle)
+- **Qué hace**: el usuario reorganiza los bloques de `/secop/seguimiento` (KPIs, alertas urgentes, panel de cuentas, tabla, tabs) y los del panel de detalle (Notas, Cronograma, Cambios, Estado de monitoreo, Entidad, Objeto, Data grid, SECOP link) según su workflow personal. Cada usuario tiene su orden, persistido por perfil.
+- **Por qué**: cada operadora/jefe tiene un flujo distinto y lo que es prioritario para uno puede ser secundario para otro. Hoy la única forma de pedir un cambio es por chat → decisión global → rompe la preferencia de quien estaba acostumbrado al orden anterior. Caso real (2026-05-07): movimos "Notas del equipo" del fondo del panel al tope; ayudó a la mayoría pero forzó la decisión a todos.
+- **Versión por fases**:
+  1. **Fase A** — colapsar/expandir + ocultar cada bloque, persistido por usuario. ~1 día
+  2. **Fase B** — DnD vertical (arriba/abajo) con `dnd-kit`. ~2-3 días
+  3. **Fase C** — layout 2D estilo Notion (probablemente NO vale la pena para esta app)
+- **Consideraciones técnicas**:
+  - Columna `ui_preferences JSONB` en `profiles` (o tabla aparte si crece)
+  - Shape: `{ seguimiento: { detail_panel: { order: ["notas",...], collapsed: ["estado_monitoreo"] } } }`
+  - API `GET/PUT /api/profile/ui-preferences`
+  - Hook `useUiPreference(key, default)` con cache localStorage + sync server
+  - Default razonable cuando nunca se ha tocado (lo que está hoy)
+  - Botón "Restablecer orden" por vista
+- **Prioridad**: Media — depende del rediseño con Claude Design (idea anterior). Si vamos a rediseñar la UI, conviene meter modularidad como parte del rediseño en vez de hacerlo dos veces
+- Origen: sesión 2026-05-07 después de mover "Notas del equipo" al tope; el usuario reflexionó que querría poder hacer ese tipo de reorganizaciones él mismo
+
+#### Auditoría de features secundarios — decidir mantener / esconder / eliminar
+- **Qué hace**: hacer un inventario formal de los features fuera de Seguimiento (Dashboard, Apuntes, Contratos, Nuevo Contrato, Envíos, Facturas, Mis Empresas, Proveedores, Entidades, Radar, Calendario, Actividad) y para cada uno decidir: rediseñar+mantener / esconder del sidebar / eliminar completo. Resultado: sidebar más corto, menos código que mantener, foco claro
+- **Por qué**: a 2026-05-07, Seguimiento es el módulo de uso diario; el resto está prácticamente sin usar. Cada feature no usada es ruido visual, superficie de mantenimiento y deuda mental ("¿debería usarlo?"). Origen: el usuario observó "el más avanzado y útil es el de seguimiento, el resto realmente no lo estoy usando"
+- **Proceso sugerido**:
+  - Sesión dedicada ~1-2h con el usuario por cada feature: cuántas veces a la semana lo usa, qué sentiría si desapareciera (alivio / nada / molestia)
+  - Decisión por feature: rediseñar / esconder / eliminar
+  - Documento `docs/feature-audit-2026-05.md` con resultados
+  - PRs aplicando decisiones, los más fáciles primero (esconder vía sidebar = commit reversible)
+- **Consideraciones técnicas**:
+  - Esconder = comentar entradas en `components/ui/Sidebar.tsx` (1 línea por feature, totalmente reversible)
+  - Eliminar = borrar `app/<ruta>/`, componentes asociados, API routes, eventualmente migration que dropea tabla. **Antes de eliminar, exportar datos** (CSV o dump SQL) por si en 6 meses queremos reactivar
+  - Para eliminaciones, dar 1-2 semanas de "deprecation period" con banner antes — por si alguien del equipo lo usaba sin que nos enteráramos
+- **Relación con otras ideas**:
+  - **Antecede** al "Rediseño completo de frontend con Claude Design" — no tiene sentido rediseñar features que vamos a borrar
+  - **Complementa** "Layout modular en Seguimiento" — sidebar más corto deja más espacio para que Seguimiento se sienta el centro
+- **Prioridad**: Media — no urgente pero conviene hacerlo ANTES del rediseño grande para no gastar ciclos puliendo features que vamos a eliminar
 
 #### Fase 4: Radar de Procesos (`/secop/radar`)
 - Vista visual de todos los procesos monitoreados
