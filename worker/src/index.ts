@@ -22,7 +22,8 @@ import { pollSetupCommands } from './telegram/poller.js'
  *   npx tsx src/index.ts --loop   # Run continuously on cron schedule
  *
  * Loop mode (Colombia TZ, UTC-5):
- *   • 5 ciclos/día: 06:00, 12:00, 17:00, 22:00, 03:00
+ *   • Cada 30 min de 06:00 a 22:00 (sin madrugada — SECOP no publica de noche).
+ *     Total: 33 ciclos/día. Stale máx: 30 min.
  *   • Polling cada 30s — chequea horarios + sync requests + bootstrap de procesos nuevos
  *   • Un ciclo de arranque al iniciar el servicio
  *   • Self-exit a las MAX_UPTIME_HOURS para forzar reinicio limpio (anti-zombie)
@@ -36,11 +37,39 @@ import { pollSetupCommands } from './telegram/poller.js'
 type ScheduleSlot = { hour: number; minute: number; label: string }
 
 const SCHEDULES: ScheduleSlot[] = [
-  { hour: 6,  minute: 0, label: '06:00 AM' },
-  { hour: 12, minute: 0, label: '12:00 PM' },
-  { hour: 17, minute: 0, label: '05:00 PM' },
-  { hour: 22, minute: 0, label: '10:00 PM' },
-  { hour: 3,  minute: 0, label: '03:00 AM' },
+  { hour: 6,  minute: 0,  label: '06:00 AM' },
+  { hour: 6,  minute: 30, label: '06:30 AM' },
+  { hour: 7,  minute: 0,  label: '07:00 AM' },
+  { hour: 7,  minute: 30, label: '07:30 AM' },
+  { hour: 8,  minute: 0,  label: '08:00 AM' },
+  { hour: 8,  minute: 30, label: '08:30 AM' },
+  { hour: 9,  minute: 0,  label: '09:00 AM' },
+  { hour: 9,  minute: 30, label: '09:30 AM' },
+  { hour: 10, minute: 0,  label: '10:00 AM' },
+  { hour: 10, minute: 30, label: '10:30 AM' },
+  { hour: 11, minute: 0,  label: '11:00 AM' },
+  { hour: 11, minute: 30, label: '11:30 AM' },
+  { hour: 12, minute: 0,  label: '12:00 PM' },
+  { hour: 12, minute: 30, label: '12:30 PM' },
+  { hour: 13, minute: 0,  label: '01:00 PM' },
+  { hour: 13, minute: 30, label: '01:30 PM' },
+  { hour: 14, minute: 0,  label: '02:00 PM' },
+  { hour: 14, minute: 30, label: '02:30 PM' },
+  { hour: 15, minute: 0,  label: '03:00 PM' },
+  { hour: 15, minute: 30, label: '03:30 PM' },
+  { hour: 16, minute: 0,  label: '04:00 PM' },
+  { hour: 16, minute: 30, label: '04:30 PM' },
+  { hour: 17, minute: 0,  label: '05:00 PM' },
+  { hour: 17, minute: 30, label: '05:30 PM' },
+  { hour: 18, minute: 0,  label: '06:00 PM' },
+  { hour: 18, minute: 30, label: '06:30 PM' },
+  { hour: 19, minute: 0,  label: '07:00 PM' },
+  { hour: 19, minute: 30, label: '07:30 PM' },
+  { hour: 20, minute: 0,  label: '08:00 PM' },
+  { hour: 20, minute: 30, label: '08:30 PM' },
+  { hour: 21, minute: 0,  label: '09:00 PM' },
+  { hour: 21, minute: 30, label: '09:30 PM' },
+  { hour: 22, minute: 0,  label: '10:00 PM' },
 ]
 
 // Self-restart cada N horas. NSSM reinicia el servicio automáticamente.
@@ -52,7 +81,7 @@ const PROCESS_START = Date.now()
 
 // Tracker para no disparar el mismo slot dos veces en el mismo día.
 // Clave: "YYYY-MM-DD-<label>" en hora Bogotá. Como el proceso se reinicia
-// cada MAX_UPTIME_HOURS, el set nunca crece más de ~5 entradas — no hace
+// cada MAX_UPTIME_HOURS, el set nunca crece más de ~33 entradas — no hace
 // falta TTL ni cleanup.
 const firedSlotKeys = new Set<string>()
 
