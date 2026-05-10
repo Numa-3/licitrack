@@ -1,7 +1,13 @@
 import { admin } from '../db.js'
 import { config } from '../config.js'
 import { sendMessage, TelegramApiError } from './api.js'
-import { formatNotification, type NotificationRow, type ProcessInfo } from './format.js'
+import {
+  formatNotification,
+  formatAlert,
+  type NotificationRow,
+  type ProcessInfo,
+  type AlertRow,
+} from './format.js'
 
 const MAX_PER_TICK = 50
 const MAX_ATTEMPTS = 3
@@ -101,6 +107,84 @@ export async function sendPendingNotifications(): Promise<{ sent: number; failed
 
   if (sent > 0 || failed > 0) {
     console.log(`[Telegram] Sent ${sent}, failed ${failed} (pending: ${pending.length})`)
+  }
+  return { sent, failed }
+}
+
+/**
+ * Lee system_alerts pendientes y las envía al grupo configurado.
+ * Mismo patrón que sendPendingNotifications pero leyendo system_alerts.
+ * No-op silencioso si no hay token o no hay group_chat_id.
+ */
+export async function sendPendingAlerts(): Promise<{ sent: number; failed: number }> {
+  if (!config.telegramBotToken) return { sent: 0, failed: 0 }
+
+  const { data: cfg } = await admin
+    .from('telegram_config')
+    .select('group_chat_id')
+    .eq('id', 1)
+    .maybeSingle()
+
+  if (!cfg?.group_chat_id) return { sent: 0, failed: 0 }
+
+  const { data: pending, error } = await admin
+    .from('system_alerts')
+    .select('id, alert_type, severity, state, message, telegram_attempts')
+    .is('telegram_sent_at', null)
+    .lt('telegram_attempts', MAX_ATTEMPTS)
+    .order('severity', { ascending: false }) // critical antes que warning
+    .order('detected_at', { ascending: true })
+    .limit(MAX_PER_TICK)
+
+  if (error) {
+    console.error('[Telegram] Error fetching pending alerts:', error.message)
+    return { sent: 0, failed: 0 }
+  }
+  if (!pending?.length) return { sent: 0, failed: 0 }
+
+  let sent = 0
+  let failed = 0
+
+  for (const alert of pending) {
+    const text = formatAlert(alert as AlertRow)
+
+    try {
+      await sendMessage(config.telegramBotToken, Number(cfg.group_chat_id), text, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      })
+      await admin
+        .from('system_alerts')
+        .update({
+          telegram_sent_at: new Date().toISOString(),
+          telegram_attempts: alert.telegram_attempts + 1,
+          telegram_error: null,
+        })
+        .eq('id', alert.id)
+      sent++
+    } catch (err) {
+      failed++
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`[Telegram] Alert send failed for ${alert.id}: ${message}`)
+
+      await admin
+        .from('system_alerts')
+        .update({
+          telegram_attempts: alert.telegram_attempts + 1,
+          telegram_error: message.slice(0, 500),
+        })
+        .eq('id', alert.id)
+
+      if (err instanceof TelegramApiError && err.retryAfter) {
+        // 429 → respeta retry_after y aborta el resto del batch
+        await new Promise(r => setTimeout(r, err.retryAfter! * 1000))
+        break
+      }
+    }
+  }
+
+  if (sent > 0 || failed > 0) {
+    console.log(`[Telegram] Alerts sent ${sent}, failed ${failed} (pending: ${pending.length})`)
   }
   return { sent, failed }
 }

@@ -58,3 +58,42 @@ export function formatNotification(
 
   return lines.join('\n')
 }
+
+// ── Alertas de salud del sistema ────────────────────────────
+
+export type AlertRow = {
+  alert_type: string
+  severity: 'warning' | 'critical'
+  state: 'firing' | 'resolved'
+  message: string
+}
+
+const ALERT_TYPE_LABEL: Record<string, string> = {
+  worker_dead: 'Worker muerto',
+  login_failures: 'Fallos de login',
+  excessive_logins: 'Logins excesivos',
+  stale_processes: 'Procesos sin monitorear',
+  no_cycles: 'Sin ciclos recientes',
+  stuck_notifications: 'Notificaciones atascadas',
+}
+
+/**
+ * Formatea una fila de system_alerts como mensaje HTML para Telegram.
+ * Prefijos según severity + state:
+ *   - resolved → "✅ Resuelto"
+ *   - critical firing → "🚨 CRÍTICO"
+ *   - warning firing → "⚠️ Aviso"
+ */
+export function formatAlert(alert: AlertRow): string {
+  let prefix: string
+  if (alert.state === 'resolved') {
+    prefix = '✅ <b>Resuelto</b>'
+  } else if (alert.severity === 'critical') {
+    prefix = '🚨 <b>CRÍTICO</b>'
+  } else {
+    prefix = '⚠️ <b>Aviso</b>'
+  }
+
+  const typeLabel = ALERT_TYPE_LABEL[alert.alert_type] ?? alert.alert_type
+  return `${prefix} · ${escapeHtml(typeLabel)}\n\n${escapeHtml(alert.message)}`
+}
