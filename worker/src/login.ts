@@ -28,6 +28,43 @@ import { solveCaptcha as solveCaptchaShared } from './captcha.js'
 const MAX_LOGIN_ATTEMPTS = 3
 const RETRY_BACKOFF_MS = [5_000, 30_000] // 5s antes del 2do intento, 30s antes del 3ro
 
+// ── Login health tracking (alimenta system_alerts reglas 2 y 3) ──
+
+async function logLoginAttempt(
+  accountId: string,
+  status: 'success' | 'failure',
+  failureReason?: string,
+): Promise<void> {
+  const { error } = await admin.from('secop_login_log').insert({
+    account_id: accountId,
+    status,
+    failure_reason: failureReason ?? null,
+  })
+  if (error) console.error('[Login] login_log insert failed:', error.message)
+}
+
+async function incrementConsecutiveFailures(accountId: string): Promise<void> {
+  const { data: current } = await admin
+    .from('secop_accounts')
+    .select('consecutive_login_failures')
+    .eq('id', accountId)
+    .single()
+  const newValue = (current?.consecutive_login_failures ?? 0) + 1
+  const { error } = await admin
+    .from('secop_accounts')
+    .update({ consecutive_login_failures: newValue })
+    .eq('id', accountId)
+  if (error) console.error('[Login] consecutive-failures increment failed:', error.message)
+}
+
+async function resetConsecutiveFailures(accountId: string): Promise<void> {
+  const { error } = await admin
+    .from('secop_accounts')
+    .update({ consecutive_login_failures: 0 })
+    .eq('id', accountId)
+  if (error) console.error('[Login] consecutive-failures reset failed:', error.message)
+}
+
 async function captureFailureArtifacts(
   page: Page | null,
   accountName: string,
@@ -83,10 +120,14 @@ export async function loginAccount(accountId: string, entityOverride?: string): 
       await new Promise(r => setTimeout(r, wait))
     }
     const ok = await attemptLogin(account, password, entityOverride, attempt)
-    if (ok) return true
+    if (ok) {
+      await resetConsecutiveFailures(accountId)
+      return true
+    }
   }
 
   console.error(`[Login] ${account.name}: all ${MAX_LOGIN_ATTEMPTS} attempts failed`)
+  await incrementConsecutiveFailures(accountId)
   return false
 }
 
@@ -130,6 +171,7 @@ async function attemptLogin(
       `) as boolean
       if (captchaStillPresent) {
         await captureFailureArtifacts(page, account.name, attempt, 'captcha-solving-failed')
+        await logLoginAttempt(account.id, 'failure', 'captcha-solving-failed')
         return false
       }
     }
@@ -246,6 +288,7 @@ async function attemptLogin(
       `) as string
       if (errorMsg) console.error(`[Login] Visible errors: ${errorMsg}`)
       await captureFailureArtifacts(page, account.name, attempt, 'still-on-login-after-submit')
+      await logLoginAttempt(account.id, 'failure', 'still-on-login-after-submit')
       return false
     }
 
@@ -275,6 +318,7 @@ async function attemptLogin(
     await saveSession(account.id, cookieList, 4)
     console.log(`[Login] Saved ${cookieList.length} cookies for ${account.name}`)
 
+    await logLoginAttempt(account.id, 'success')
     return true
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -289,6 +333,7 @@ async function attemptLogin(
       reason = 'network-error'
     }
     await captureFailureArtifacts(page, account.name, attempt, reason)
+    await logLoginAttempt(account.id, 'failure', reason)
     return false
   } finally {
     await browser.close()

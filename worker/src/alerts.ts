@@ -191,6 +191,131 @@ async function checkStaleProcesses(): Promise<void> {
   }
 }
 
+/**
+ * Regla 2: cuentas con 3+ fallos consecutivos de login.
+ * Severity: warning si 3-5 fallos, critical si >= 6.
+ * Lee `secop_accounts.consecutive_login_failures` (mantenido por login.ts).
+ */
+async function checkLoginFailureStreak(): Promise<void> {
+  const { data: failing, error } = await admin
+    .from('secop_accounts')
+    .select('id, name, consecutive_login_failures')
+    .eq('is_active', true)
+    .gte('consecutive_login_failures', 3)
+
+  if (error) {
+    console.error('[Alerts] checkLoginFailureStreak query failed:', error.message)
+    return
+  }
+
+  const currentFiringIds = new Set<string>((failing ?? []).map(a => a.id))
+
+  // Obtener IDs de cuentas con alerta firing previamente para poder resolverlas
+  const { data: previousFiring } = await admin
+    .from('system_alerts')
+    .select('target_id')
+    .eq('alert_type', 'login_failures')
+    .eq('state', 'firing')
+    .not('target_id', 'is', null)
+
+  const previousFiringIds = new Set<string>(
+    (previousFiring ?? [])
+      .map(a => a.target_id)
+      .filter((id): id is string => id !== null),
+  )
+
+  // Insertar/refrescar alertas para cuentas actualmente fallando
+  for (const acc of failing ?? []) {
+    const severity: AlertSeverity = acc.consecutive_login_failures >= 6 ? 'critical' : 'warning'
+    await insertAlertWithCooldown(
+      'login_failures',
+      severity,
+      acc.id,
+      `Cuenta ${acc.name}: ${acc.consecutive_login_failures} fallos de login consecutivos`,
+      { account_name: acc.name, consecutive_failures: acc.consecutive_login_failures },
+    )
+  }
+
+  // Resolver alertas para cuentas que ya no están fallando
+  for (const prevId of previousFiringIds) {
+    if (!currentFiringIds.has(prevId)) {
+      await markResolvedIfActive('login_failures', prevId)
+    }
+  }
+}
+
+/**
+ * Regla 3: cuentas con > 15 logins exitosos en últimas 24h.
+ * Indica que SECOP está invalidando sesiones antes de las 4h del TTL,
+ * forzando re-logins frecuentes (= captchas extra).
+ */
+async function checkExcessiveLogins(): Promise<void> {
+  const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+
+  const { data: logs, error } = await admin
+    .from('secop_login_log')
+    .select('account_id')
+    .gte('attempted_at', cutoff)
+    .eq('status', 'success')
+
+  if (error) {
+    console.error('[Alerts] checkExcessiveLogins query failed:', error.message)
+    return
+  }
+
+  // Contar logins exitosos por cuenta
+  const counts = new Map<string, number>()
+  for (const log of logs ?? []) {
+    counts.set(log.account_id, (counts.get(log.account_id) ?? 0) + 1)
+  }
+
+  const overThreshold = Array.from(counts.entries()).filter(([, count]) => count > 15)
+  const currentFiringIds = new Set<string>(overThreshold.map(([id]) => id))
+
+  // Obtener IDs previamente firing para resolución
+  const { data: previousFiring } = await admin
+    .from('system_alerts')
+    .select('target_id')
+    .eq('alert_type', 'excessive_logins')
+    .eq('state', 'firing')
+    .not('target_id', 'is', null)
+
+  const previousFiringIds = new Set<string>(
+    (previousFiring ?? [])
+      .map(a => a.target_id)
+      .filter((id): id is string => id !== null),
+  )
+
+  if (overThreshold.length > 0) {
+    // Hidratar nombres de cuentas para mensajes legibles
+    const ids = overThreshold.map(([id]) => id)
+    const { data: accounts } = await admin
+      .from('secop_accounts')
+      .select('id, name')
+      .in('id', ids)
+    const nameMap = new Map<string, string>()
+    for (const a of accounts ?? []) nameMap.set(a.id, a.name)
+
+    for (const [accountId, count] of overThreshold) {
+      const name = nameMap.get(accountId) ?? accountId
+      await insertAlertWithCooldown(
+        'excessive_logins',
+        'critical',
+        accountId,
+        `Cuenta ${name}: ${count} logins en últimas 24h (> 15 = SECOP invalidando sesiones temprano)`,
+        { account_name: name, login_count_24h: count },
+      )
+    }
+  }
+
+  // Resolver para cuentas que volvieron a la normalidad
+  for (const prevId of previousFiringIds) {
+    if (!currentFiringIds.has(prevId)) {
+      await markResolvedIfActive('excessive_logins', prevId)
+    }
+  }
+}
+
 /** Regla 5: 0 ciclos exitosos en últimas 2h durante horario activo (06:00–22:00 Bogotá) */
 async function checkNoCyclesInWindow(): Promise<void> {
   if (!isInActiveHour()) return // fuera de horario, regla no aplica
@@ -224,13 +349,13 @@ async function checkNoCyclesInWindow(): Promise<void> {
  * Entry point: corre todas las reglas que el worker puede chequear por sí mismo.
  * Se llama desde el polling loop cada 30s. Cada regla maneja sus propios errores.
  *
- * Reglas pendientes en próximas fases:
- *   - Regla 2 (login_failures): requiere tracking en login.ts
- *   - Regla 3 (excessive_logins): requiere secop_login_log poblado
- *   - Regla 1 (worker_dead): se hace en Vercel Cron, no aquí
+ * Pendiente: Regla 1 (worker_dead) se hace en Vercel Cron, no aquí (paradoja:
+ * si el worker está muerto, no puede alertarse a sí mismo).
  */
 export async function runAlertChecks(): Promise<void> {
   await checkStuckNotifications()
   await checkStaleProcesses()
   await checkNoCyclesInWindow()
+  await checkLoginFailureStreak()
+  await checkExcessiveLogins()
 }
