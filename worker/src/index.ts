@@ -8,6 +8,7 @@ import { runMonitorCycle } from './monitor.js'
 import { runPrecontractualMonitorCycle, monitorOneNow } from './precontractual/monitor.js'
 import { sendPendingNotifications } from './telegram/sender.js'
 import { pollSetupCommands } from './telegram/poller.js'
+import { runAlertChecks } from './alerts.js'
 
 /**
  * Main entry point for the SECOP worker.
@@ -85,6 +86,51 @@ const PROCESS_START = Date.now()
 // falta TTL ni cleanup.
 const firedSlotKeys = new Set<string>()
 
+// ── Worker health: persistencia del estado del worker en DB ──
+// Permite que un chequeo externo (Vercel Cron) detecte si el worker está
+// muerto leyendo last_heartbeat_at. También trackea el último ciclo para
+// auditoría y para detectar ciclos que se cuelgan.
+
+async function writeHeartbeat(): Promise<void> {
+  const { error } = await admin
+    .from('worker_health')
+    .update({ last_heartbeat_at: new Date().toISOString() })
+    .eq('id', 1)
+  if (error) console.error('[Worker] Heartbeat update failed:', error.message)
+}
+
+async function writeUptimeStart(): Promise<void> {
+  const now = new Date().toISOString()
+  const { error } = await admin
+    .from('worker_health')
+    .update({ uptime_started_at: now, last_heartbeat_at: now })
+    .eq('id', 1)
+  if (error) console.error('[Worker] Uptime start update failed:', error.message)
+}
+
+async function markCycleStarted(): Promise<void> {
+  const { error } = await admin
+    .from('worker_health')
+    .update({ last_cycle_started_at: new Date().toISOString() })
+    .eq('id', 1)
+  if (error) console.error('[Worker] Cycle-start update failed:', error.message)
+}
+
+async function markCycleFinished(
+  status: 'success' | 'error' | 'timeout',
+  durationSec: number,
+): Promise<void> {
+  const { error } = await admin
+    .from('worker_health')
+    .update({
+      last_cycle_finished_at: new Date().toISOString(),
+      last_cycle_status: status,
+      last_cycle_duration_seconds: Math.round(durationSec),
+    })
+    .eq('id', 1)
+  if (error) console.error('[Worker] Cycle-finish update failed:', error.message)
+}
+
 // Flag para evitar que un schedule pise un ciclo en curso
 let cycleRunning = false
 
@@ -103,6 +149,11 @@ async function tryRunFullCycle(trigger: string): Promise<void> {
   const start = Date.now()
   console.log(`\n╔══ ${trigger} ══════════════════════╗`)
 
+  // Marcar inicio en worker_health (no bloquea el ciclo si falla)
+  await markCycleStarted()
+
+  let cycleStatus: 'success' | 'error' | 'timeout' = 'success'
+
   let timeoutHandle: NodeJS.Timeout | null = null
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(
@@ -114,12 +165,16 @@ async function tryRunFullCycle(trigger: string): Promise<void> {
   try {
     await Promise.race([runFullCycle(), timeoutPromise])
   } catch (err) {
-    console.error('[Worker] Cycle failed:', err instanceof Error ? err.message : err)
+    const message = err instanceof Error ? err.message : String(err)
+    cycleStatus = message.includes('hard timeout') ? 'timeout' : 'error'
+    console.error('[Worker] Cycle failed:', message)
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle)
     cycleRunning = false
-    const elapsed = ((Date.now() - start) / 1000).toFixed(1)
-    console.log(`╚══ Cycle done in ${elapsed}s ══════╝\n`)
+    const elapsedSec = (Date.now() - start) / 1000
+    console.log(`╚══ Cycle done in ${elapsedSec.toFixed(1)}s ══════╝\n`)
+    // Persistir resultado del ciclo (status + duración)
+    await markCycleFinished(cycleStatus, elapsedSec)
   }
 }
 
@@ -157,6 +212,9 @@ async function main() {
   }
   console.log(`[Worker] Self-restart después de ${MAX_UPTIME_HOURS}h uptime (NSSM reinicia)`)
   console.log()
+
+  // Marcar uptime_started_at = ahora en worker_health (cada restart resetea esto)
+  await writeUptimeStart()
 
   // Run once on startup so we don't wait hours for the first scheduled tick
   void tryRunFullCycle('startup')
@@ -246,12 +304,21 @@ function heartbeatTick() {
 // 2x créditos CapSolver por nada.
 let pollRunning = false
 
+// Flag separado para alertas: no se serializa contra cycleRunning porque
+// las alertas no compiten con el ciclo (solo lee/escribe system_alerts).
+// Pero sí evitamos que se piloten ticks anteriores si una corrida tarda > 30s.
+let alertsRunning = false
+
 function startPollingLoop() {
   const POLL_INTERVAL_MS = 30_000
   console.log(`[Worker] Polling loop every ${POLL_INTERVAL_MS / 1000}s — schedules, sync, bootstrap, telegram, watchdog`)
 
   setInterval(() => {
-    // 1. Heartbeat (siempre) — para ver signos de vida en log idle
+    // 0. Heartbeat persistente en DB (siempre, fire-and-forget)
+    //    Esto es lo que el cron externo lee para detectar "worker muerto > 30 min".
+    void writeHeartbeat()
+
+    // 1. Heartbeat en log (siempre) — para ver signos de vida en log idle
     try { heartbeatTick() } catch {}
 
     // 2. Watchdog max-uptime (siempre) — exit si pasamos el límite
@@ -260,6 +327,21 @@ function startPollingLoop() {
     // 3. Scheduler de ciclos completos (siempre — tryRunFullCycle ya tiene guard interno)
     try { checkSchedules() } catch (err) {
       console.error('[Poll] Schedule check failed:', err instanceof Error ? err.message : err)
+    }
+
+    // 3.5 Alertas de salud (independiente de cycleRunning — queremos alertar incluso
+    //     si un ciclo está colgado). Flag propio para que no se solapen.
+    if (!alertsRunning) {
+      alertsRunning = true
+      void (async () => {
+        try {
+          await runAlertChecks()
+        } catch (err) {
+          console.error('[Poll] Alert checks failed:', err instanceof Error ? err.message : err)
+        } finally {
+          alertsRunning = false
+        }
+      })()
     }
 
     // 4. Sync + bootstrap + telegram — solo si no hay ciclo grande corriendo
