@@ -1,0 +1,47 @@
+name: Worker Health Check
+
+# Llama cada 5 min al endpoint /api/cron/worker-health-check de la app
+# en Vercel, que verifica si el worker LiciTrack está vivo y dispara
+# alertas de Telegram cuando detecta que está caído (Regla 1 del sistema
+# de alertas).
+#
+# Usa GitHub Actions en vez de Vercel Cron porque Vercel Hobby plan
+# limita los crons a 1/día. GitHub Actions permite cualquier frecuencia
+# y, además, sigue funcionando incluso si el server Windows del worker
+# se cae completamente.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # cada 5 min (UTC)
+  workflow_dispatch:        # permite trigger manual desde la UI de GitHub Actions
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call Vercel cron endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          ENDPOINT_URL: https://licitrackk.vercel.app/api/cron/worker-health-check
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET secret no está configurado en repo settings"
+            exit 1
+          fi
+
+          response=$(curl -sS -w "\n%{http_code}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$ENDPOINT_URL")
+
+          # Última línea es el status, el resto es el body
+          status=$(echo "$response" | tail -n 1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP $status"
+          echo "Body: $body"
+
+          if [ "$status" != "200" ]; then
+            echo "::error::Health check devolvió HTTP $status"
+            exit 1
+          fi
