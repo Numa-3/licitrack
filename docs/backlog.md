@@ -248,22 +248,12 @@ Funcionalidades que no existen todavía.
 - **Prioridad**: Media — depende del rediseño con Claude Design (idea anterior). Si vamos a rediseñar la UI, conviene meter modularidad como parte del rediseño en vez de hacerlo dos veces
 - Origen: sesión 2026-05-07 después de mover "Notas del equipo" al tope; el usuario reflexionó que querría poder hacer ese tipo de reorganizaciones él mismo
 
-#### Auditoría de features secundarios — decidir mantener / esconder / eliminar
-- **Qué hace**: hacer un inventario formal de los features fuera de Seguimiento (Dashboard, Apuntes, Contratos, Nuevo Contrato, Envíos, Facturas, Mis Empresas, Proveedores, Entidades, Radar, Calendario, Actividad) y para cada uno decidir: rediseñar+mantener / esconder del sidebar / eliminar completo. Resultado: sidebar más corto, menos código que mantener, foco claro
-- **Por qué**: a 2026-05-07, Seguimiento es el módulo de uso diario; el resto está prácticamente sin usar. Cada feature no usada es ruido visual, superficie de mantenimiento y deuda mental ("¿debería usarlo?"). Origen: el usuario observó "el más avanzado y útil es el de seguimiento, el resto realmente no lo estoy usando"
-- **Proceso sugerido**:
-  - Sesión dedicada ~1-2h con el usuario por cada feature: cuántas veces a la semana lo usa, qué sentiría si desapareciera (alivio / nada / molestia)
-  - Decisión por feature: rediseñar / esconder / eliminar
-  - Documento `docs/feature-audit-2026-05.md` con resultados
-  - PRs aplicando decisiones, los más fáciles primero (esconder vía sidebar = commit reversible)
-- **Consideraciones técnicas**:
-  - Esconder = comentar entradas en `components/ui/Sidebar.tsx` (1 línea por feature, totalmente reversible)
-  - Eliminar = borrar `app/<ruta>/`, componentes asociados, API routes, eventualmente migration que dropea tabla. **Antes de eliminar, exportar datos** (CSV o dump SQL) por si en 6 meses queremos reactivar
-  - Para eliminaciones, dar 1-2 semanas de "deprecation period" con banner antes — por si alguien del equipo lo usaba sin que nos enteráramos
-- **Relación con otras ideas**:
-  - **Antecede** al "Rediseño completo de frontend con Claude Design" — no tiene sentido rediseñar features que vamos a borrar
-  - **Complementa** "Layout modular en Seguimiento" — sidebar más corto deja más espacio para que Seguimiento se sienta el centro
-- **Prioridad**: Media — no urgente pero conviene hacerlo ANTES del rediseño grande para no gastar ciclos puliendo features que vamos a eliminar
+#### Auditoría de features secundarios — Fase 2 (borrado real, en 1-2 meses)
+- **Estado**: Fase 1 ejecutada el 2026-05-10. Sidebar limpio, redirects reapuntados a Seguimiento. Las decisiones quedaron documentadas en [docs/feature-audit-2026-05.md](feature-audit-2026-05.md)
+- **Resultado Fase 1**: 9 features escondidas del sidebar (Dashboard, Apuntes, Contratos, Nuevo Contrato, Envíos, Facturas, Mis Empresas, Proveedores, Entidades) + Radar escondido (sin eliminar). Calendario SECOP y Actividad mantenidas para rediseño
+- **Pendiente Fase 2** (1-2 meses, otra sesión): borrar código frontend + API routes + migration de drop de 11 tablas. Pre-requisito: 4-8 semanas sin reclamos del equipo confirma que no se extrañan
+- **Pre-flight Fase 2**: ver checklist completo en [docs/feature-audit-2026-05.md](feature-audit-2026-05.md#plan-de-fase-2--borrado-real-1-2-meses-sesión-futura)
+- **Prioridad**: Baja — esperar el período de gracia. Si pasa una de las "señales de arrepentimiento" en docs/feature-audit-2026-05.md, reactivar en lugar de borrar
 
 #### Fase 4: Radar de Procesos (`/secop/radar`)
 - Vista visual de todos los procesos monitoreados

@@ -5,7 +5,7 @@ import ActivityClient from '@/components/features/ActivityClient'
 export default async function ActivityPage() {
   const { supabase, userRole } = await getAuthUser()
 
-  if (userRole !== 'jefe') redirect('/dashboard')
+  if (userRole !== 'jefe') redirect('/secop/seguimiento')
 
   const [{ data: activities }, { data: profiles }, { data: contracts }] = await Promise.all([
     supabase

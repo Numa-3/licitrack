@@ -6,24 +6,26 @@ import { usePathname } from 'next/navigation'
 import LogoutButton from './LogoutButton'
 import NotificationPanel from '@/components/features/NotificationPanel'
 import {
-  LayoutDashboard,
-  ClipboardList,
-  FileText,
-  FilePlus,
-  Truck,
+  // Activos
   Activity,
   Eye,
-  Building2,
-  Users,
-  Landmark,
-  Receipt,
-  Radar,
   Calendar,
   Settings,
   Menu,
   ChevronRight,
   Bell,
   Send,
+  // Usados por entradas escondidas (auditoría 2026-05-10) — restaurar al reactivar
+  LayoutDashboard,
+  ClipboardList,
+  FileText,
+  FilePlus,
+  Truck,
+  Building2,
+  Users,
+  Landmark,
+  Receipt,
+  Radar,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -33,35 +35,39 @@ type NavSection = {
   items: { href: string; label: string; icon: LucideIcon }[]
 }
 
+// Auditoría de features 2026-05-10: las secciones General, Operaciones, Directorio
+// y la entrada Radar quedaron escondidas del sidebar (decisión documentada en
+// docs/feature-audit-2026-05.md). Las rutas siguen accesibles vía URL directa.
+// Para reactivar cualquier entrada, descomentar la línea correspondiente.
 const navSections: NavSection[] = [
-  {
-    label: 'General',
-    items: [
-      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { href: '/tasks', label: 'Apuntes', icon: ClipboardList },
-    ],
-  },
-  {
-    label: 'Operaciones',
-    items: [
-      { href: '/contracts', label: 'Contratos', icon: FileText },
-      { href: '/contracts/new', label: 'Nuevo Contrato', icon: FilePlus },
-      { href: '/shipments', label: 'Envios', icon: Truck },
-      { href: '/invoices', label: 'Facturas', icon: Receipt },
-    ],
-  },
-  {
-    label: 'Directorio',
-    items: [
-      { href: '/organizations', label: 'Mis Empresas', icon: Building2 },
-      { href: '/suppliers', label: 'Proveedores', icon: Users },
-      { href: '/entities', label: 'Entidades', icon: Landmark },
-    ],
-  },
+  // {
+  //   label: 'General',
+  //   items: [
+  //     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  //     { href: '/tasks', label: 'Apuntes', icon: ClipboardList },
+  //   ],
+  // },
+  // {
+  //   label: 'Operaciones',
+  //   items: [
+  //     { href: '/contracts', label: 'Contratos', icon: FileText },
+  //     { href: '/contracts/new', label: 'Nuevo Contrato', icon: FilePlus },
+  //     { href: '/shipments', label: 'Envios', icon: Truck },
+  //     { href: '/invoices', label: 'Facturas', icon: Receipt },
+  //   ],
+  // },
+  // {
+  //   label: 'Directorio',
+  //   items: [
+  //     { href: '/organizations', label: 'Mis Empresas', icon: Building2 },
+  //     { href: '/suppliers', label: 'Proveedores', icon: Users },
+  //     { href: '/entities', label: 'Entidades', icon: Landmark },
+  //   ],
+  // },
   {
     label: 'SECOP',
     items: [
-      { href: '/secop/radar', label: 'Radar', icon: Radar },
+      // { href: '/secop/radar', label: 'Radar', icon: Radar },
       { href: '/secop/seguimiento', label: 'Seguimiento', icon: Eye },
       { href: '/secop/calendario', label: 'Calendario', icon: Calendar },
     ],

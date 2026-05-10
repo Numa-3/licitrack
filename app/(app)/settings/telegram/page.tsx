@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 export default async function TelegramSettingsPage() {
   const { supabase, userRole } = await getAuthUser()
 
-  if (userRole !== 'jefe') redirect('/dashboard')
+  if (userRole !== 'jefe') redirect('/secop/seguimiento')
 
   const { data: cfg } = await supabase
     .from('telegram_config')

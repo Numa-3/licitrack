@@ -45,7 +45,7 @@ export default function LoginPage() {
       localStorage.removeItem('licitrack_remember')
     }
 
-    router.push('/dashboard')
+    router.push('/secop/seguimiento')
     router.refresh()
   }
 
