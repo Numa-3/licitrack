@@ -257,7 +257,9 @@ function NotificationBell() {
 
   useEffect(() => {
     fetchCount()
-    const interval = setInterval(fetchCount, 60_000)
+    // Optimización Disk IO 2026-05-10: polling cada 5 min en vez de 1 min.
+    // Reduce ~20% del Disk IO total (notifications era el query #4 más caro).
+    const interval = setInterval(fetchCount, 5 * 60_000)
     return () => clearInterval(interval)
   }, [fetchCount])
 

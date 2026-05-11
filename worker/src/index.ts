@@ -309,14 +309,25 @@ let pollRunning = false
 // Pero sí evitamos que se piloten ticks anteriores si una corrida tarda > 30s.
 let alertsRunning = false
 
+// Timestamp del último heartbeat persistido en DB. El polling loop corre cada
+// 30s (para que Telegram/watchdog/alertas sean rápidos) pero el heartbeat solo
+// se escribe cada 60s para reducir Disk IO. El cron externo detecta "muerto"
+// con threshold de 30 min, así que 60s entre heartbeats no afecta detección.
+const HEARTBEAT_INTERVAL_MS = 60_000
+let lastHeartbeatWriteAt = 0
+
 function startPollingLoop() {
   const POLL_INTERVAL_MS = 30_000
   console.log(`[Worker] Polling loop every ${POLL_INTERVAL_MS / 1000}s — schedules, sync, bootstrap, telegram, watchdog`)
 
   setInterval(() => {
-    // 0. Heartbeat persistente en DB (siempre, fire-and-forget)
+    // 0. Heartbeat persistente en DB cada HEARTBEAT_INTERVAL_MS (no en cada tick).
     //    Esto es lo que el cron externo lee para detectar "worker muerto > 30 min".
-    void writeHeartbeat()
+    const now = Date.now()
+    if (now - lastHeartbeatWriteAt >= HEARTBEAT_INTERVAL_MS) {
+      lastHeartbeatWriteAt = now
+      void writeHeartbeat()
+    }
 
     // 1. Heartbeat en log (siempre) — para ver signos de vida en log idle
     try { heartbeatTick() } catch {}

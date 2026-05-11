@@ -97,6 +97,8 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEnt
 
   useEffect(() => {
     if (!syncing) return
+    // Optimización Disk IO 2026-05-10: polling de sync cada 10s en vez de 5s.
+    // Un sync dura típicamente 30-90s; el extra de 5s de latencia es imperceptible.
     const interval = setInterval(async () => {
       const res = await fetch('/api/secop/accounts').catch(() => null)
       if (!res?.ok) return
@@ -112,7 +114,7 @@ function AccountRow({ acc, isExpanded, onExpand, onToggle, onDelete, onUpdateEnt
         onRefreshProcesses()
         setTimeout(() => setSyncDone(false), 5000)
       }
-    }, 5000)
+    }, 10_000)
     return () => clearInterval(interval)
   }, [syncing, acc.id, onRefreshAccounts, onRefreshProcesses])
 

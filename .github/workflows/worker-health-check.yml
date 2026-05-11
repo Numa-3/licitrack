@@ -12,7 +12,10 @@ name: Worker Health Check
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # cada 5 min (UTC)
+    # Cada 10 min (UTC). El umbral de detección de "worker muerto" es > 30 min,
+    # así que 10 min entre checks deja max delay de detección de ~40 min.
+    # Optimización Disk IO 2026-05-10: bajamos de 5 min a 10 min.
+    - cron: '*/10 * * * *'
   workflow_dispatch:        # permite trigger manual desde la UI de GitHub Actions
 
 jobs:
