@@ -66,19 +66,30 @@ export async function runMonitorCycle(): Promise<{
     // Contractual monitor only picks up post-award contracts. Precontractual
     // processes (tipo_proceso='precontractual') are handled by a separate
     // cycle that uses the public SECOP II API instead of Playwright+login.
-    const { data: processes } = await admin
+    const { data: allProcesses } = await admin
       .from('secop_processes')
-      .select('id, secop_process_id, url_publica, account_id, entity_name')
+      .select('id, secop_process_id, url_publica, account_id, entity_name, estado')
       .eq('monitoring_enabled', true)
       .or('tipo_proceso.is.null,tipo_proceso.eq.contractual')
 
-    if (!processes?.length) {
+    if (!allProcesses?.length) {
       console.log('[Monitor] No monitored processes found')
       await finishLog(logId, 'success', 0, 0)
       return { checked: 0, changes: 0 }
     }
 
-    console.log(`[Monitor] ${processes.length} processes to check`)
+    // Optimización Disk IO 2026-05-10: skipear procesos en estado terminal.
+    // Un proceso "Terminado" o "Liquidado" ya no cambia más en SECOP — scrapearlo
+    // cada 30 min es gasto puro. Los seguimos en `monitoring_enabled=true` para
+    // mantenerlos en el panel del usuario, pero el worker los ignora.
+    const TERMINAL_STATES = ['Terminado', 'Liquidado']
+    const processes = allProcesses.filter(p => !p.estado || !TERMINAL_STATES.includes(p.estado))
+    const skipped = allProcesses.length - processes.length
+    if (skipped > 0) {
+      console.log(`[Monitor] ${processes.length} active processes to check (${skipped} skipped: terminado/liquidado)`)
+    } else {
+      console.log(`[Monitor] ${processes.length} processes to check`)
+    }
 
     // Group by account_id → entity_name
     const grouped = groupByAccountAndEntity(processes)

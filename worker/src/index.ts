@@ -395,28 +395,76 @@ function startPollingLoop() {
   }, POLL_INTERVAL_MS)
 }
 
+// Optimización Disk IO 2026-05-10: discovery cada 2 ciclos (cada 1h en vez
+// de cada 30 min). Los procesos ya trackeados siguen siendo monitoreados en
+// CADA ciclo (sin cambios). Lo único que se separa es "buscar procesos nuevos
+// en SECOP" — eso ahora corre cada hora. Reduce ~25% del IO del worker porque
+// el discovery es lo más caro (login + entity switching + scrape de listas).
+const DISCOVERY_MIN_INTERVAL_MS = 55 * 60_000  // 55 min (con margen vs el ciclo de 30 min)
+let lastDiscoveryAt = 0
+
 async function runFullCycle() {
-  // 1. Get active accounts — prioritize those with sync_requested_at
-  const { data: accounts, error: accountsError } = await admin
-    .from('secop_accounts')
-    .select('id, name, username, monitored_entities, entity_name, sync_requested_at')
-    .eq('is_active', true)
-    .order('sync_requested_at', { ascending: true, nullsFirst: false })
+  // Decidir si este ciclo hace discovery o solo monitoring.
+  // Tras un restart del worker, lastDiscoveryAt=0 → primer ciclo SIEMPRE hace
+  // discovery (comportamiento razonable: arrancar fresh).
+  const now = Date.now()
+  const shouldRunDiscovery = now - lastDiscoveryAt >= DISCOVERY_MIN_INTERVAL_MS
 
-  if (accountsError) {
-    console.error('[Worker] Error fetching accounts:', accountsError.message)
+  if (!shouldRunDiscovery) {
+    const skipMinutes = Math.floor((now - lastDiscoveryAt) / 60_000)
+    console.log(`[Worker] Skipping discovery (último corrió hace ${skipMinutes} min) — solo monitoring este ciclo`)
+  } else {
+    lastDiscoveryAt = now
+
+    // 1. Get active accounts — prioritize those with sync_requested_at
+    const { data: accounts, error: accountsError } = await admin
+      .from('secop_accounts')
+      .select('id, name, username, monitored_entities, entity_name, sync_requested_at')
+      .eq('is_active', true)
+      .order('sync_requested_at', { ascending: true, nullsFirst: false })
+
+    if (accountsError) {
+      console.error('[Worker] Error fetching accounts:', accountsError.message)
+    }
+
+    if (!accounts?.length) {
+      console.log('[Worker] No active SECOP accounts configured')
+      console.log('[Worker] Add accounts via the LiciTrack UI: /secop/seguimiento')
+      console.log()
+      // No retornamos — todavía hay que correr monitoring (de procesos ya trackeados sin cuenta asociada)
+    } else {
+      console.log(`[Worker] ${accounts.length} active account(s) — discovery cycle\n`)
+      await runDiscoveryForAccounts(accounts)
+    }
   }
 
-  if (!accounts?.length) {
-    console.log('[Worker] No active SECOP accounts configured')
-    console.log('[Worker] Add accounts via the LiciTrack UI: /secop/seguimiento')
-    console.log()
-    return
+  // Monitoring SIEMPRE (en cada ciclo de 30 min, sin cambio)
+  // 3. Monitor contractual (post-award) processes
+  console.log('\n--- Monitoring (contractual) ---')
+  const contractualResult = await runMonitorCycle()
+  console.log(`[Worker] Contractual: ${contractualResult.checked} checked, ${contractualResult.changes} changes`)
+
+  // 4. Monitor precontractual processes via public API (no login, no captcha)
+  console.log('\n--- Monitoring (precontractual) ---')
+  try {
+    const precontractualResult = await runPrecontractualMonitorCycle()
+    console.log(`[Worker] Precontractual: ${precontractualResult.checked} checked, ${precontractualResult.changes} changes`)
+  } catch (err) {
+    console.error('[Worker] Precontractual cycle failed:', err instanceof Error ? err.message : err)
   }
+}
 
-  console.log(`[Worker] ${accounts.length} active account(s)\n`)
+type AccountForDiscovery = {
+  id: string
+  name: string
+  username: string
+  monitored_entities: string[] | null
+  entity_name: string | null
+  sync_requested_at: string | null
+}
 
-  // 2. For each account: login once, then discover for each monitored company
+async function runDiscoveryForAccounts(accounts: AccountForDiscovery[]) {
+  // For each account: login once, then discover for each monitored company
   for (const acc of accounts) {
     console.log(`[Worker] ${acc.name}`)
 
@@ -476,20 +524,6 @@ async function runFullCycle() {
         .eq('id', acc.id)
       console.log(`\n  Sync flag cleared`)
     }
-  }
-
-  // 3. Monitor contractual (post-award) processes
-  console.log('\n--- Monitoring (contractual) ---')
-  const contractualResult = await runMonitorCycle()
-  console.log(`[Worker] Contractual: ${contractualResult.checked} checked, ${contractualResult.changes} changes`)
-
-  // 4. Monitor precontractual processes via public API (no login, no captcha)
-  console.log('\n--- Monitoring (precontractual) ---')
-  try {
-    const precontractualResult = await runPrecontractualMonitorCycle()
-    console.log(`[Worker] Precontractual: ${precontractualResult.checked} checked, ${precontractualResult.changes} changes`)
-  } catch (err) {
-    console.error('[Worker] Precontractual cycle failed:', err instanceof Error ? err.message : err)
   }
 }
 

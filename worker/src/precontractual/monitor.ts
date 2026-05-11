@@ -29,20 +29,30 @@ export async function runPrecontractualMonitorCycle(): Promise<{ checked: number
   let totalChanges = 0
 
   try {
-    const { data: processes } = await admin
+    const { data: allProcesses } = await admin
       .from('secop_processes')
-      .select('id, notice_uid, secop_process_id, api_pending')
+      .select('id, notice_uid, secop_process_id, api_pending, estado')
       .eq('monitoring_enabled', true)
       .eq('tipo_proceso', 'precontractual')
       .not('notice_uid', 'is', null)
 
-    if (!processes || processes.length === 0) {
+    if (!allProcesses || allProcesses.length === 0) {
       console.log('[Precontractual] No processes to check')
       await finishLog(logId, 'success', 0, 0)
       return { checked: 0, changes: 0 }
     }
 
-    console.log(`[Precontractual] ${processes.length} processes to check`)
+    // Optimización Disk IO 2026-05-10: skipear procesos en estado terminal.
+    // Un precontractual en estado "Desierto"/"Anulado"/"Cancelado" ya no se mueve más.
+    // (Si se adjudica y celebra, pasa a contractual y este filtro ya no aplica.)
+    const TERMINAL_STATES = ['Desierto', 'Anulado', 'Cancelado', 'Adjudicado y Celebrado']
+    const processes = allProcesses.filter(p => !p.estado || !TERMINAL_STATES.includes(p.estado))
+    const skipped = allProcesses.length - processes.length
+    if (skipped > 0) {
+      console.log(`[Precontractual] ${processes.length} active to check (${skipped} skipped: estado terminal)`)
+    } else {
+      console.log(`[Precontractual] ${processes.length} processes to check`)
+    }
 
     // Load our own company NITs so diff can classify awards as "to us"
     const { data: accounts } = await admin
