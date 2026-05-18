@@ -1,4 +1,5 @@
 import { requireJefe } from '@/lib/admin'
+import { extractNoticeUid } from '@/lib/secop/precontractual'
 import { NextRequest } from 'next/server'
 
 /**
@@ -17,10 +18,12 @@ export async function PATCH(
 
   const { id } = await params
   const body = await request.json()
-  const { radar_state, monitoring_enabled, custom_name } = body as {
+  const { radar_state, monitoring_enabled, custom_name, phase_override, url_publica } = body as {
     radar_state?: string
     monitoring_enabled?: boolean
     custom_name?: string | null
+    phase_override?: 'pre' | 'contractual' | 'post' | null
+    url_publica?: string
   }
 
   const updates: Record<string, unknown> = {}
@@ -43,6 +46,36 @@ export async function PATCH(
   if (custom_name !== undefined) {
     const trimmed = typeof custom_name === 'string' ? custom_name.trim() : ''
     updates.custom_name = trimmed.length > 0 ? trimmed.slice(0, 120) : null
+  }
+
+  if (phase_override !== undefined) {
+    const validPhases = ['pre', 'contractual', 'post']
+    if (phase_override !== null && !validPhases.includes(phase_override)) {
+      return Response.json(
+        { error: `phase_override debe ser uno de: ${validPhases.join(', ')} o null` },
+        { status: 400 },
+      )
+    }
+    updates.phase_override = phase_override
+  }
+
+  // Relink manual: el usuario pegó un nuevo URL (típicamente porque SECOP creó
+  // una adenda con un notice_uid distinto). Extraemos el CO1.NTC.X del URL,
+  // actualizamos notice_uid + secop_process_id, y reseteamos last_monitored_at
+  // para forzar re-scrape en el próximo ciclo del worker.
+  if (url_publica !== undefined) {
+    const trimmed = typeof url_publica === 'string' ? url_publica.trim() : ''
+    const noticeUid = extractNoticeUid(trimmed)
+    if (!noticeUid) {
+      return Response.json(
+        { error: 'No pude extraer CO1.NTC.X del URL. Asegurate de pegar un link de SECOP válido.' },
+        { status: 400 },
+      )
+    }
+    updates.url_publica = `https://community.secop.gov.co/Public/Tendering/OpportunityDetail/Index?noticeUID=${noticeUid}&isFromPublicArea=True&isModal=False`
+    updates.notice_uid = noticeUid
+    updates.secop_process_id = noticeUid
+    updates.last_monitored_at = null
   }
 
   if (Object.keys(updates).length === 0) {

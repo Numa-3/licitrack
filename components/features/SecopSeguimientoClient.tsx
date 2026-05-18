@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { formatCurrency } from '@/lib/utils/format'
 import {
   Eye, AlertTriangle, Clock, Plus, X,
@@ -13,8 +13,10 @@ import { timeAgo } from './seguimiento/helpers'
 import ChangesTimeline from './seguimiento/ChangesTimeline'
 import DetailPanel from './seguimiento/DetailPanel'
 import AccountsPanel from './seguimiento/AccountsPanel'
+import { derivePhase, PHASE_META, type Phase } from '@/lib/secop/phase'
 
 type Tab = 'all' | 'urgent' | 'changes'
+type PhaseFilter = Phase | 'all'
 const PAGE_SIZE = 50
 
 type Props = {
@@ -45,8 +47,20 @@ export default function SecopSeguimientoClient({
   const [changes] = useState<Change[]>(initialChanges)
   const [accounts, setAccounts] = useState<Account[]>(initialAccounts)
   const [activeTab, setActiveTab] = useState<Tab>('all')
+  const [phaseFilter, setPhaseFilter] = useState<PhaseFilter>('all')
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(false)
+
+  const phaseCounts = useMemo(() => {
+    const acc = { pre: 0, contractual: 0, post: 0 }
+    for (const p of processes) acc[derivePhase(p)]++
+    return acc
+  }, [processes])
+
+  const visibleProcesses = useMemo(() => {
+    if (phaseFilter === 'all') return processes
+    return processes.filter(p => derivePhase(p) === phaseFilter)
+  }, [processes, phaseFilter])
 
   const [showAccounts, setShowAccounts] = useState(false)
   const [showAddProcess, setShowAddProcess] = useState(false)
@@ -167,6 +181,42 @@ export default function SecopSeguimientoClient({
       return
     }
     showToast(name ? 'Nombre guardado' : 'Nombre eliminado', 'success')
+  }
+
+  const relinkProcess = async (id: string, newUrl: string): Promise<boolean> => {
+    const res = await fetch(`/api/secop/processes/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url_publica: newUrl }),
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      showToast(json.error || 'Error al reemplazar URL')
+      return false
+    }
+    const updated = await res.json()
+    setProcesses(ps => ps.map(p => p.id === id ? { ...p, ...updated } : p))
+    setSelected(s => s && s.id === id ? { ...s, ...updated } : s)
+    showToast('URL reemplazado. El worker re-scrapeará en el próximo ciclo.', 'success')
+    return true
+  }
+
+  const updatePhase = async (id: string, phase: Phase | null) => {
+    const prev = processes.map(p => ({ ...p }))
+    setProcesses(ps => ps.map(p => p.id === id ? { ...p, phase_override: phase } : p))
+    setSelected(s => s && s.id === id ? { ...s, phase_override: phase } : s)
+    const res = await fetch(`/api/secop/processes/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phase_override: phase }),
+    })
+    if (!res.ok) {
+      setProcesses(prev)
+      setSelected(s => s && s.id === id ? prev.find(p => p.id === id) ?? s : s)
+      showToast('Error al guardar etapa')
+      return
+    }
+    showToast(phase ? 'Etapa actualizada' : 'Etapa automática restaurada', 'success')
   }
 
   const deleteProcess = async (id: string) => {
@@ -359,6 +409,32 @@ export default function SecopSeguimientoClient({
         ))}
       </div>
 
+      {/* Filtro por etapa */}
+      {activeTab !== 'changes' && (
+        <div className="flex items-center flex-wrap gap-2 mb-4">
+          <span className="text-xs font-medium text-gray-500 mr-1">Etapa:</span>
+          {([
+            { key: 'all',         label: 'Todas',            count: processes.length },
+            { key: 'pre',         label: 'Precontractual',   count: phaseCounts.pre },
+            { key: 'contractual', label: 'En ejecución',     count: phaseCounts.contractual },
+            { key: 'post',        label: 'Post-contractual', count: phaseCounts.post },
+          ] as const).map(c => (
+            <button
+              key={c.key}
+              onClick={() => setPhaseFilter(c.key)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ring-1 ring-inset transition-colors ${
+                phaseFilter === c.key
+                  ? 'bg-gray-900 text-white ring-gray-900'
+                  : 'bg-white text-gray-600 ring-gray-200 hover:ring-gray-300'
+              }`}
+            >
+              {c.label}
+              <span className={`text-[10px] ${phaseFilter === c.key ? 'text-gray-300' : 'text-gray-400'}`}>{c.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Content */}
       {activeTab === 'changes' ? (
         <ChangesTimeline initialChanges={changes} />
@@ -371,7 +447,7 @@ export default function SecopSeguimientoClient({
       ) : (
         <>
           <ProcessTable
-            processes={processes}
+            processes={visibleProcesses}
             onSelect={setSelected}
             onToggleMonitoring={toggleMonitoring}
             onDelete={isJefe ? deleteProcess : undefined}
@@ -399,6 +475,8 @@ export default function SecopSeguimientoClient({
           process={selected}
           onClose={() => setSelected(null)}
           onRename={renameProcess}
+          onUpdatePhase={updatePhase}
+          onRelink={relinkProcess}
           canEdit={isJefe}
           currentUserId={userId}
         />
@@ -478,25 +556,19 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
           </thead>
           <tbody className="divide-y divide-[#EAEAEA]">
             {processes.map(p => {
-              const isPrecontractual = p.tipo_proceso === 'precontractual'
+              const meta = PHASE_META[derivePhase(p)]
               return (
               <tr key={p.id} onClick={() => onSelect(p)}
-                className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${!p.monitoring_enabled ? 'opacity-50' : ''} ${isPrecontractual ? 'bg-violet-50/40 hover:bg-violet-50/70' : ''}`}>
-                <td className={`px-4 py-3 max-w-[300px] ${isPrecontractual ? 'border-l-2 border-violet-400' : ''}`}>
+                className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${!p.monitoring_enabled ? 'opacity-50' : ''} ${meta.rowTint}`}>
+                <td className={`px-4 py-3 max-w-[300px] ${meta.border ? `border-l-2 ${meta.border}` : ''}`}>
                   <p className="font-medium text-gray-900 truncate">{p.custom_name || p.entidad}</p>
                   <p className="text-xs text-gray-500 truncate mt-0.5">
                     {p.custom_name ? p.entidad : p.objeto}
                   </p>
                   <div className="flex items-center gap-2 mt-1">
-                    {isPrecontractual ? (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-600/20">
-                        Precontractual
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-600/20">
-                        En ejecución
-                      </span>
-                    )}
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset ${meta.pill}`}>
+                      {meta.label}
+                    </span>
                     <SourceBadge source={p.source} />
                     {p.api_pending && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-600/20">
@@ -506,14 +578,12 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
                     {p.referencia_proceso && <span className="text-[10px] text-gray-400">{p.referencia_proceso}</span>}
                   </div>
                   {p.latest_note && (
-                    <div className="flex items-start gap-1 mt-1.5 text-[11px] text-gray-500 italic">
-                      <MessageSquare size={11} className="mt-0.5 shrink-0 text-gray-400" />
-                      <span className="truncate">
-                        "{p.latest_note.content.length > 80
-                          ? `${p.latest_note.content.slice(0, 80).trim()}…`
-                          : p.latest_note.content}"
-                      </span>
-                      <span className="text-gray-400 shrink-0 not-italic">· {timeAgo(p.latest_note.created_at)}</span>
+                    <div className="flex items-start gap-1.5 mt-2 px-2 py-1.5 rounded-md bg-amber-50 ring-1 ring-inset ring-amber-200/70 text-xs text-amber-900">
+                      <MessageSquare size={12} className="mt-0.5 shrink-0 text-amber-600" />
+                      <div className="flex-1 min-w-0">
+                        <span className="font-medium whitespace-pre-wrap break-words">{p.latest_note.content}</span>
+                        <span className="text-amber-700/70 font-normal ml-1">· {timeAgo(p.latest_note.created_at)}</span>
+                      </div>
                     </div>
                   )}
                 </td>

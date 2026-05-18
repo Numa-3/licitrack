@@ -5,6 +5,7 @@ import { X, ExternalLink, Loader2, Calendar, Pencil, Check, X as XIcon, Trash2, 
 import { formatCurrency } from '@/lib/utils/format'
 import type { Process, Change, CronogramaEvent, ProcessNote } from './types'
 import { timeAgo } from './helpers'
+import { derivePhase, PHASE_META, type Phase } from '@/lib/secop/phase'
 
 type SnapshotInfo = {
   id: string
@@ -13,10 +14,12 @@ type SnapshotInfo = {
   source_type: string
 }
 
-export default function DetailPanel({ process: p, onClose, onRename, canEdit, currentUserId }: {
+export default function DetailPanel({ process: p, onClose, onRename, onUpdatePhase, onRelink, canEdit, currentUserId }: {
   process: Process
   onClose: () => void
   onRename?: (id: string, name: string | null) => Promise<void>
+  onUpdatePhase?: (id: string, phase: Phase | null) => Promise<void>
+  onRelink?: (id: string, url: string) => Promise<boolean>
   canEdit?: boolean // true for jefe — gates "ver eliminadas" toggle on notes
   currentUserId?: string | null
 }) {
@@ -189,6 +192,15 @@ export default function DetailPanel({ process: p, onClose, onRename, canEdit, cu
             <SourceBadge source={p.source} />
           </div>
 
+          {/* Etapa (override manual) */}
+          {canEdit && onUpdatePhase && (
+            <PhaseSelector
+              currentPhase={derivePhase(p)}
+              isOverridden={!!p.phase_override}
+              onChange={phase => onUpdatePhase(p.id, phase)}
+            />
+          )}
+
           {/* Estado de monitoreo */}
           <div className="bg-gray-50 rounded-lg border border-[#EAEAEA] p-3 space-y-3">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Estado de monitoreo</label>
@@ -274,13 +286,18 @@ export default function DetailPanel({ process: p, onClose, onRename, canEdit, cu
             <Field label="Valor estimado" value={formatCurrency(p.valor_estimado)} />
           </div>
 
-          {/* SECOP link */}
-          {p.url_publica && (
-            <a href={p.url_publica} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700">
-              <ExternalLink size={14} /> Ver en SECOP II
-            </a>
-          )}
+          {/* SECOP link + relink */}
+          <div className="space-y-2">
+            {p.url_publica && (
+              <a href={p.url_publica} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700">
+                <ExternalLink size={14} /> Ver en SECOP II
+              </a>
+            )}
+            {canEdit && onRelink && (
+              <RelinkUrl processId={p.id} currentUrl={p.url_publica} onSubmit={onRelink} />
+            )}
+          </div>
 
           {/* Cronograma */}
           <div>
@@ -467,6 +484,71 @@ function SourceBadge({ source }: { source: string }) {
   )
 }
 
+function PhaseSelector({ currentPhase, isOverridden, onChange }: {
+  currentPhase: Phase
+  isOverridden: boolean
+  onChange: (phase: Phase | null) => Promise<void>
+}) {
+  const [saving, setSaving] = useState<Phase | 'auto' | null>(null)
+
+  const select = async (next: Phase | null) => {
+    setSaving(next === null ? 'auto' : next)
+    try { await onChange(next) }
+    finally { setSaving(null) }
+  }
+
+  const options: { key: Phase; label: string }[] = [
+    { key: 'pre', label: 'Precontractual' },
+    { key: 'contractual', label: 'En ejecución' },
+    { key: 'post', label: 'Post-contractual' },
+  ]
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Etapa</label>
+        {isOverridden && (
+          <button
+            onClick={() => select(null)}
+            disabled={saving !== null}
+            className="text-[10px] text-gray-500 hover:text-gray-900 disabled:opacity-50 inline-flex items-center gap-1"
+            title="Quitar override manual"
+          >
+            {saving === 'auto' ? <Loader2 size={10} className="animate-spin" /> : null}
+            Restaurar automático
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map(o => {
+          const isActive = currentPhase === o.key
+          const meta = PHASE_META[o.key]
+          return (
+            <button
+              key={o.key}
+              onClick={() => !isActive && select(o.key)}
+              disabled={saving !== null}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ring-1 ring-inset transition-colors disabled:opacity-50 ${
+                isActive
+                  ? `${meta.pill} ring-current/30`
+                  : 'bg-white text-gray-600 ring-gray-200 hover:ring-gray-300'
+              }`}
+            >
+              {saving === o.key && <Loader2 size={10} className="animate-spin" />}
+              {o.label}
+            </button>
+          )
+        })}
+      </div>
+      <p className="text-[10px] text-gray-400 mt-1.5">
+        {isOverridden
+          ? 'Marcada manualmente.'
+          : 'Derivada automáticamente de SECOP. Cámbiala si SECOP no actualizó el estado.'}
+      </p>
+    </div>
+  )
+}
+
 function CronogramaRow({ event }: { event: CronogramaEvent }) {
   const now = Date.now()
   const endMs = event.end_date ? new Date(event.end_date).getTime() : null
@@ -507,6 +589,79 @@ function Field({ label, value }: { label: string; value: string | null | undefin
     <div>
       <label className="text-xs font-semibold uppercase tracking-widest text-gray-500">{label}</label>
       <p className="mt-0.5 text-sm text-gray-800">{value || '—'}</p>
+    </div>
+  )
+}
+
+function RelinkUrl({ processId, currentUrl, onSubmit }: {
+  processId: string
+  currentUrl: string | null
+  onSubmit: (id: string, url: string) => Promise<boolean>
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    const trimmed = draft.trim()
+    if (!trimmed) return
+    setSaving(true)
+    try {
+      const ok = await onSubmit(processId, trimmed)
+      if (ok) {
+        setDraft('')
+        setExpanded(false)
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!expanded) {
+    return (
+      <button
+        onClick={() => setExpanded(true)}
+        className="text-[11px] text-gray-500 hover:text-gray-900 inline-flex items-center gap-1"
+        title="Si SECOP creó un nuevo notice (adenda) para este proceso, pegá el nuevo URL aquí"
+      >
+        Reemplazar URL (adenda)
+      </button>
+    )
+  }
+
+  return (
+    <div className="rounded-md bg-amber-50 ring-1 ring-inset ring-amber-200/70 p-3 space-y-2">
+      <p className="text-[11px] text-amber-900">
+        Pegá el nuevo URL de SECOP (cuando SECOP crea una adenda con un notice nuevo).
+        Esto reemplaza el link monitoreado y el worker volverá a scrapear en el próximo ciclo.
+      </p>
+      <p className="text-[10px] text-amber-700/80 break-all">
+        URL actual: {currentUrl || '—'}
+      </p>
+      <textarea
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        placeholder="https://www.secop.gov.co/.../notice=CO1.NTC.XXXXXXX"
+        rows={2}
+        className="w-full px-2.5 py-1.5 text-xs border border-amber-300 rounded-md focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          onClick={save}
+          disabled={saving || !draft.trim()}
+          className="px-3 py-1 text-xs font-medium bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 inline-flex items-center gap-1.5"
+        >
+          {saving && <Loader2 size={12} className="animate-spin" />}
+          Reemplazar
+        </button>
+        <button
+          onClick={() => { setExpanded(false); setDraft('') }}
+          disabled={saving}
+          className="px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 rounded-md disabled:opacity-50"
+        >
+          Cancelar
+        </button>
+      </div>
     </div>
   )
 }

@@ -12,6 +12,34 @@ function normDocName(s: string | null | undefined): string {
   return (s || '').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
+/**
+ * SECOP a veces sirve el HTML antes de que su `translator.loadFile(...)`
+ * traduzca al español, así que la misma celda llega como "Accepted" o
+ * "Aceptada" según el momento del scrape. Sin normalizar, el diff trataba
+ * cada flip de idioma como un cambio de estado real y generaba un evento
+ * "Póliza X: Accepted → Aceptada" en el feed.
+ */
+const ESTADO_GARANTIA_MAP: Record<string, string> = {
+  'accepted':  'Aceptada',
+  'aceptada':  'Aceptada',
+  'pending':   'Pendiente',
+  'pendiente': 'Pendiente',
+  'draft':     'Borrador',
+  'borrador':  'Borrador',
+  'expired':   'Vencida',
+  'vencida':   'Vencida',
+  'cancelled': 'Cancelada',
+  'canceled':  'Cancelada',
+  'cancelada': 'Cancelada',
+  'rejected':  'Rechazada',
+  'rechazada': 'Rechazada',
+}
+function normEstadoGarantia(s: string | null): string | null {
+  if (!s) return s
+  const key = s.trim().toLowerCase()
+  return ESTADO_GARANTIA_MAP[key] ?? s.trim()
+}
+
 // ── Types ───────────────────────────────────────────────────
 
 /** Tab 1: Información general */
@@ -152,7 +180,7 @@ export function hashSnapshot(snapshot: ProcessSnapshot): string {
     mods_count: snapshot.modificaciones.entries.length,
     garantias_count: snapshot.condiciones.garantias.length,
     garantias_state_hash: stableHash(
-      snapshot.condiciones.garantias.map(g => `${g.garantia_id}:${g.estado}`).join('|'),
+      snapshot.condiciones.garantias.map(g => `${g.garantia_id}:${normEstadoGarantia(g.estado)}`).join('|'),
     ),
   }
   return createHash('sha256').update(JSON.stringify(relevant)).digest('hex').slice(0, 16)
@@ -406,15 +434,18 @@ export function diffSnapshots(
   }
 
   // Cambio de estado / vencida
-  // Requiere que ambos estados existan y sean distintos.
+  // Requiere que ambos estados existan y sean distintos tras normalizar el
+  // idioma (SECOP oscila entre "Accepted"/"Aceptada" para el mismo estado).
   for (const [id, afterG] of afterGarantias) {
     const beforeG = beforeGarantias.get(id)
     if (!beforeG || !beforeG.estado || !afterG.estado) continue
 
-    if (beforeG.estado !== afterG.estado) {
-      const isRejected = (afterG.estado || '').toLowerCase().includes('rechaz')
-      const isAccepted = (afterG.estado || '').toLowerCase().includes('acept')
-      const isVencida = (afterG.estado || '').toLowerCase().includes('venc')
+    const beforeEstado = normEstadoGarantia(beforeG.estado)
+    const afterEstado = normEstadoGarantia(afterG.estado)
+    if (beforeEstado !== afterEstado) {
+      const isRejected = (afterEstado || '').toLowerCase().includes('rechaz')
+      const isAccepted = (afterEstado || '').toLowerCase().includes('acept')
+      const isVencida = (afterEstado || '').toLowerCase().includes('venc')
       changes.push({
         change_type: isVencida
           ? 'warranty_expired'
@@ -424,9 +455,9 @@ export function diffSnapshots(
               ? 'warranty_rejected'
               : 'warranty_state_changed',
         priority: 'high',
-        before_json: { garantia_id: id, estado: beforeG.estado },
-        after_json: { garantia_id: id, estado: afterG.estado },
-        summary: `Póliza ${id}: ${beforeG.estado || '?'} → ${afterG.estado || '?'}`,
+        before_json: { garantia_id: id, estado: beforeEstado },
+        after_json: { garantia_id: id, estado: afterEstado },
+        summary: `Póliza ${id}: ${beforeEstado || '?'} → ${afterEstado || '?'}`,
       })
     }
   }
@@ -436,36 +467,85 @@ export function diffSnapshots(
 
 // ── Next deadline ───────────────────────────────────────────
 
+/**
+ * Parsea fechas de SECOP en cualquier formato que aparezca en la práctica:
+ *   - ISO o formato estándar JS                            ("2026-06-14T...")
+ *   - DD/MM/YYYY [HH:MM[:SS] [AM|PM|a.m.|p.m.]]            ("15/10/2026 11:59:00 PM")
+ *   - "X días para terminar"                               (countdown futuro)
+ *
+ * Devuelve milisegundos UTC, o null si no es parseable o si es relativo-pasado
+ * ("X días de tiempo transcurrido") — esos no sirven como deadline futuro.
+ */
+export function parseSecopDate(raw: string | null | undefined): number | null {
+  if (!raw) return null
+  const s = raw.trim()
+
+  // 1. Formato estándar JS / ISO
+  const std = new Date(s).getTime()
+  if (!isNaN(std)) return std
+
+  // 2. DD/MM/YYYY HH:MM:SS AM/PM (formato latino de SECOP)
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|a\.?\s*m\.?|p\.?\s*m\.?)?)?/i)
+  if (m) {
+    const day = parseInt(m[1], 10)
+    const month = parseInt(m[2], 10) - 1
+    const year = parseInt(m[3], 10)
+    let hour = m[4] ? parseInt(m[4], 10) : 0
+    const min = m[5] ? parseInt(m[5], 10) : 0
+    const sec = m[6] ? parseInt(m[6], 10) : 0
+    if (m[7]) {
+      const isPM = /p/i.test(m[7])
+      if (isPM && hour < 12) hour += 12
+      if (!isPM && hour === 12) hour = 0
+    }
+    const ms = new Date(year, month, day, hour, min, sec).getTime()
+    if (!isNaN(ms)) return ms
+  }
+
+  // 3. "X días para terminar" → today + X días
+  const future = s.match(/(\d+)\s+d[ií]as?\s+para\s+terminar/i)
+  if (future) {
+    return Date.now() + parseInt(future[1], 10) * 24 * 60 * 60 * 1000
+  }
+
+  // 4. "X días de tiempo transcurrido" → ya pasó, no es deadline futuro
+  return null
+}
+
 export function findNextDeadline(snapshot: ProcessSnapshot): {
   deadline: string | null
   label: string | null
 } {
-  const dates: { date: string; label: string }[] = []
+  const dates: { raw: string; label: string }[] = []
 
   if (snapshot.info_general.fecha_fin) {
-    dates.push({ date: snapshot.info_general.fecha_fin, label: 'Finalización del contrato' })
+    dates.push({ raw: snapshot.info_general.fecha_fin, label: 'Finalización del contrato' })
   }
   if (snapshot.info_general.fecha_liquidacion_fin) {
-    dates.push({ date: snapshot.info_general.fecha_liquidacion_fin, label: 'Fin de liquidación' })
+    dates.push({ raw: snapshot.info_general.fecha_liquidacion_fin, label: 'Fin de liquidación' })
   }
   if (snapshot.condiciones.fecha_limite_garantias) {
-    dates.push({ date: snapshot.condiciones.fecha_limite_garantias, label: 'Entrega de garantías' })
+    dates.push({ raw: snapshot.condiciones.fecha_limite_garantias, label: 'Entrega de garantías' })
   }
 
   const now = Date.now()
-  let nearest: { date: string; label: string } | null = null
   let nearestMs = Infinity
+  let nearestLabel: string | null = null
 
   for (const d of dates) {
-    const ms = new Date(d.date).getTime()
-    if (!isNaN(ms) && ms > now && ms < nearestMs) {
+    const ms = parseSecopDate(d.raw)
+    if (ms !== null && ms > now && ms < nearestMs) {
       nearestMs = ms
-      nearest = d
+      nearestLabel = d.label
     }
   }
 
+  if (nearestLabel === null) return { deadline: null, label: null }
+
+  // Devolvemos ISO para que la columna TIMESTAMPTZ lo acepte y el frontend
+  // lo parsee sin ambigüedad.
   return {
-    deadline: nearest?.date || null,
-    label: nearest?.label || null,
+    deadline: new Date(nearestMs).toISOString(),
+    label: nearestLabel,
   }
 }
