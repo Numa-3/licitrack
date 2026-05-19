@@ -9,6 +9,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { Process, Change, Account, WorkerStatus } from './seguimiento/types'
+import type { InboxOrphan } from '@/lib/secop/inbox-orphans'
 import { timeAgo } from './seguimiento/helpers'
 import ChangesTimeline from './seguimiento/ChangesTimeline'
 import DetailPanel from './seguimiento/DetailPanel'
@@ -24,6 +25,7 @@ type Props = {
   initialCount: number
   initialChanges: Change[]
   initialAccounts: Account[]
+  initialInboxOrphans: InboxOrphan[]
   urgentCount: number
   workerStatus: WorkerStatus
   userId: string
@@ -35,6 +37,7 @@ export default function SecopSeguimientoClient({
   initialCount,
   initialChanges,
   initialAccounts,
+  initialInboxOrphans,
   urgentCount,
   workerStatus,
   userId,
@@ -358,6 +361,11 @@ export default function SecopSeguimientoClient({
             Ver urgentes
           </button>
         </div>
+      )}
+
+      {/* Mensajes huérfanos (bandeja sin matchear a procesos monitoreados) */}
+      {initialInboxOrphans.length > 0 && (
+        <InboxOrphansBanner orphans={initialInboxOrphans} />
       )}
 
       {/* KPI Cards */}
@@ -726,6 +734,81 @@ function UnreadBell({ count, recentChanges, isOpen, onToggle, onMarkSeen }: {
               Marcar como visto
             </button>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function InboxOrphansBanner({ orphans }: { orphans: InboxOrphan[] }) {
+  const [expanded, setExpanded] = useState(false)
+  const byTipo = useMemo(() => {
+    const c: Record<string, number> = {}
+    for (const o of orphans) c[o.tipo] = (c[o.tipo] || 0) + 1
+    return c
+  }, [orphans])
+  return (
+    <div className="mb-6 rounded-xl p-4 bg-blue-50/60 ring-1 ring-inset ring-blue-200/70">
+      <div className="flex items-center gap-3">
+        <div className="p-2 bg-blue-100 rounded-full shrink-0">
+          <MessageSquare size={16} className="text-blue-700" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-gray-900">
+            {orphans.length} mensaje{orphans.length === 1 ? '' : 's'} sin asignar
+          </p>
+          <p className="text-xs text-gray-600 mt-0.5">
+            Recibidos en la bandeja de tus cuentas pero su referencia no matchea ningún proceso monitoreado
+            {' · '}
+            {Object.entries(byTipo).map(([t, c], i) => (
+              <span key={t}>{i > 0 ? ', ' : ''}{c} {t.toLowerCase()}</span>
+            ))}
+          </p>
+        </div>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-white hover:bg-blue-50 ring-1 ring-inset ring-blue-300 rounded-md shrink-0"
+        >
+          {expanded ? 'Ocultar' : 'Ver mensajes'}
+        </button>
+      </div>
+      {expanded && (
+        <div className="mt-3 rounded-md bg-white ring-1 ring-inset ring-blue-200/60 divide-y divide-blue-100/80 overflow-hidden">
+          {orphans.slice(0, 30).map(o => (
+            <div key={o.id} className="px-3 py-2 flex items-start gap-3 text-xs">
+              <div className="shrink-0 w-20 text-[10px] text-gray-500">
+                {new Date(o.fecha).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}
+                <br />
+                <span className="text-gray-400">{new Date(o.fecha).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-blue-50 text-blue-700 ring-blue-600/20">
+                    {o.tipo}
+                  </span>
+                  {o.ref_proceso && (
+                    <span className="text-[10px] text-gray-500">Ref: {o.ref_proceso}</span>
+                  )}
+                  {o.account_name && (
+                    <span className="text-[10px] text-gray-400">· {o.account_name}</span>
+                  )}
+                </div>
+                <p className="text-gray-800 mt-0.5 truncate">{o.asunto}</p>
+                {o.sender && <p className="text-[11px] text-gray-500 mt-0.5">De: {o.sender}</p>}
+              </div>
+              {o.detalle_url && (
+                <a href={o.detalle_url} target="_blank" rel="noopener noreferrer"
+                  className="text-[11px] text-blue-600 hover:text-blue-700 shrink-0">
+                  Ver en SECOP
+                </a>
+              )}
+            </div>
+          ))}
+          {orphans.length > 30 && (
+            <div className="px-3 py-2 text-[11px] text-gray-500 text-center">
+              + {orphans.length - 30} más (mostrando los 30 más recientes)
+            </div>
+          )}
         </div>
       )}
     </div>

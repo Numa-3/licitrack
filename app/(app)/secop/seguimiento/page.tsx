@@ -1,6 +1,7 @@
 import { getAuthUser } from '@/lib/supabase/server'
 import SecopSeguimientoClient from '@/components/features/SecopSeguimientoClient'
 import { fetchUnreadChanges } from '@/lib/secop/unread-changes'
+import { fetchInboxOrphans } from '@/lib/secop/inbox-orphans'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,6 +77,9 @@ export default async function SecopSeguimientoPage() {
   // Unread changes por proceso para el usuario actual
   const unreadByProcess = await fetchUnreadChanges(supabase, userId, processIds)
 
+  // Mensajes huérfanos (bandeja) para el banner del tope
+  const inboxOrphans = await fetchInboxOrphans(supabase)
+
   const enrichedProcesses = (processes || []).map(p => {
     const unread = unreadByProcess.get(p.id)
     return {
@@ -92,6 +96,7 @@ export default async function SecopSeguimientoPage() {
       initialCount={count || 0}
       initialChanges={recentChanges || []}
       initialAccounts={accounts || []}
+      initialInboxOrphans={inboxOrphans}
       urgentCount={urgentProcesses?.length || 0}
       workerStatus={workerLog as {
         status: 'running' | 'success' | 'error'

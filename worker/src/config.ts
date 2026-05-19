@@ -33,4 +33,6 @@ export const SECOP = {
   // Public procurement notice page (for radar processes)
   processUrl: (ntcId: string) =>
     `https://www.secop.gov.co/CO1BusinessLine/Tendering/ContractNoticeView/Index?notice=${ntcId}`,
+  // Global inbox/messages page per account
+  messagesUrl: 'https://www.secop.gov.co/CO1Marketplace/Messages/MessageManagement/Index',
 } as const

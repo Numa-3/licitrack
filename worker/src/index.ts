@@ -5,6 +5,7 @@ import { loginAccount } from './login.js'
 import { getValidSession } from './session.js'
 import { discoverProcesses } from './discovery.js'
 import { runMonitorCycle } from './monitor.js'
+import { runInboxSyncCycle } from './inbox-monitor.js'
 import { runPrecontractualMonitorCycle, monitorOneNow } from './precontractual/monitor.js'
 import { sendPendingNotifications, sendPendingAlerts } from './telegram/sender.js'
 import { pollSetupCommands } from './telegram/poller.js'
@@ -451,6 +452,17 @@ async function runFullCycle() {
     console.log(`[Worker] Precontractual: ${precontractualResult.checked} checked, ${precontractualResult.changes} changes`)
   } catch (err) {
     console.error('[Worker] Precontractual cycle failed:', err instanceof Error ? err.message : err)
+  }
+
+  // 5. Sync bandeja de mensajes (per cuenta, una URL global). Genera entradas en
+  // secop_inbox_messages y, cuando matchea, dispara secop_process_changes para
+  // que el pipeline existente notifique (Telegram + campanita unread).
+  console.log('\n--- Inbox sync ---')
+  try {
+    const inboxResult = await runInboxSyncCycle()
+    console.log(`[Worker] Inbox: ${inboxResult.totalNew} mensajes nuevos, ${inboxResult.totalMatched} matched a procesos`)
+  } catch (err) {
+    console.error('[Worker] Inbox sync failed:', err instanceof Error ? err.message : err)
   }
 }
 
