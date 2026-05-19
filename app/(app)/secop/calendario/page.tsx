@@ -1,95 +1,27 @@
 import { getAuthUser } from '@/lib/supabase/server'
 import CalendarClient from '@/components/features/CalendarClient'
+import { fetchCalendarEvents } from '@/app/api/secop/calendar/events/route'
 
 export const dynamic = 'force-dynamic'
 
 export default async function CalendarioPage() {
   const { supabase } = await getAuthUser()
 
+  // Cargar el mes actual + márgenes para que la grid 6-semanas tenga datos
+  // aún en los días "fuera del mes" que el grid también renderiza.
   const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth()
-  const startOfMonth = new Date(year, month, 1).toISOString()
-  const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59).toISOString()
+  const from = new Date(now.getFullYear(), now.getMonth(), 1)
+  from.setDate(from.getDate() - 7)
+  const to = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59)
+  to.setDate(to.getDate() + 7)
 
-  const [{ data: processes }, { data: changes }] = await Promise.all([
-    supabase
-      .from('secop_processes')
-      .select('id, secop_process_id, entidad, custom_name, objeto, next_deadline, next_deadline_label')
-      .eq('monitoring_enabled', true)
-      .not('next_deadline', 'is', null)
-      .gte('next_deadline', startOfMonth)
-      .lte('next_deadline', endOfMonth),
-    supabase
-      .from('secop_process_changes')
-      .select(`
-        id, detected_at, summary, priority,
-        secop_processes!secop_process_changes_process_id_fkey (
-          id, secop_process_id, entidad, custom_name, objeto
-        )
-      `)
-      .gte('detected_at', startOfMonth)
-      .lte('detected_at', endOfMonth)
-      .order('detected_at', { ascending: true }),
-  ])
-
-  type CalendarEvent = {
-    date: string
-    type: 'deadline' | 'change'
-    label: string
-    process_id: string
-    entidad: string
-    custom_name: string | null
-    objeto: string
-    priority: 'high' | 'medium' | 'low'
-    secop_process_id: string
-  }
-
-  const events: CalendarEvent[] = []
-
-  if (processes) {
-    for (const p of processes) {
-      if (!p.next_deadline) continue
-      const d = new Date(p.next_deadline)
-      const hoursLeft = (d.getTime() - Date.now()) / 3600000
-      events.push({
-        date: d.toISOString().slice(0, 10),
-        type: 'deadline',
-        label: p.next_deadline_label || 'Deadline',
-        process_id: p.id,
-        entidad: p.entidad,
-        custom_name: (p as { custom_name?: string | null }).custom_name ?? null,
-        objeto: (p.objeto || '').slice(0, 80),
-        priority: hoursLeft < 0 ? 'high' : hoursLeft < 48 ? 'high' : hoursLeft < 168 ? 'medium' : 'low',
-        secop_process_id: p.secop_process_id,
-      })
-    }
-  }
-
-  if (changes) {
-    for (const c of changes) {
-      const raw = c.secop_processes
-      const proc = Array.isArray(raw) ? raw[0] : raw
-      if (!proc) continue
-      const procWithName = proc as typeof proc & { custom_name?: string | null }
-      events.push({
-        date: new Date(c.detected_at).toISOString().slice(0, 10),
-        type: 'change',
-        label: c.summary,
-        process_id: proc.id,
-        entidad: proc.entidad,
-        custom_name: procWithName.custom_name ?? null,
-        objeto: (proc.objeto || '').slice(0, 80),
-        priority: c.priority as 'high' | 'medium' | 'low',
-        secop_process_id: proc.secop_process_id,
-      })
-    }
-  }
+  const { events, processes } = await fetchCalendarEvents(supabase, { from, to })
 
   return (
     <CalendarClient
       initialEvents={events}
-      initialMonth={`${year}-${String(month + 1).padStart(2, '0')}`}
+      initialProcesses={processes}
+      initialMonth={`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`}
     />
   )
 }

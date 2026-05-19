@@ -1,7 +1,7 @@
 # LiciTrack — Backlog
 
 Fuente única de verdad para todo lo pendiente: mejoras a lo existente y features nuevas.
-Última actualización: 2026-05-07
+Última actualización: 2026-05-18 (agregada feature: scraper de bandeja SECOP para detectar adendas)
 
 ---
 
@@ -49,7 +49,10 @@ Funcionalidades que no existen todavía.
 
 ### Alta prioridad
 
-#### Centro de monitoreo del sistema (`/admin/monitoreo`)
+#### Centro de monitoreo del sistema (`/admin/monitoreo`) — 🟡 PARCIAL
+- **Estado**: el backend de observabilidad está construido (worker_health, system_alerts, secop_monitor_log, telegram heartbeats). Falta la UI que consume estos datos
+- **Lo que ya existe**: `/api/debug/secop-status` con datos crudos, tabla `worker_health` con heartbeat del worker, `system_alerts` con 6 reglas firing/resolved, sender Telegram operativo
+- **Lo que falta**: la página `/admin/monitoreo` con las 4 tarjetas (worker, cuentas, procesos, servicios externos) + timeline de errores. Hoy `/admin` solo tiene reset global y gestión de usuarios
 - Dashboard interno que muestra estado en tiempo real de worker, cuentas SECOP, procesos monitoreados y servicios externos
 - **Qué mostraría**:
   - Tarjeta 1 — **Worker SECOP**: estado del servicio NSSM (running/stopped), último ciclo, próximo ciclo, errores recientes del log, tiempo promedio por ciclo, créditos CapSolver
@@ -65,7 +68,9 @@ Funcionalidades que no existen todavía.
   - Nueva tabla `system_health_log` con eventos + timestamp, retención 30 días
 - **Relación**: complementa (no reemplaza) el Centro de Notificaciones In-App. Notificaciones = cambios en contratos/procesos/pólizas. Monitoreo = salud del sistema en sí
 
-#### Métricas operativas de mecanismos internos del worker (add-on al Centro de monitoreo)
+#### Métricas operativas de mecanismos internos del worker (add-on al Centro de monitoreo) — 🟡 PARCIAL
+- **Estado**: el worker ya escribe heartbeat a tabla `worker_health` (id=1 fila singleton con `last_heartbeat_at`, `uptime_started_at`). Falta granularidad por componente + UI
+- **Lo que falta**: tabla `worker_heartbeats` (componente, ts, status, metadata_json) para que cada mecanismo (bootstrap queue, polling loop, node-cron, discovery, captcha solver, diff engine) reporte por separado; vista tipo "health check" con semáforos por componente
 - **Add-on específico** al `/admin/monitoreo`: mientras la idea anterior cubre servicios externos (Supabase, OpenRouter, CapSolver, API SECOP), esta cubre los **engranajes internos** del worker que corren en paralelo (bootstrap, polling, node-cron, discovery, diff engine)
 - **Qué monitorear**:
   - **Bootstrap queue**: último bootstrap ejecutado (ts + NTC), cola pendiente (`api_pending=true` count), tiempo promedio, últimos 10 con status/razón, alerta si pendientes >30min
@@ -85,34 +90,27 @@ Funcionalidades que no existen todavía.
 - **Relación**: NO reemplaza el Centro de monitoreo general — ambas ideas deberían ejecutarse juntas en el build de `/admin/monitoreo`. Esta es la capa "observabilidad interna del worker"
 - Origen: sesión del 2026-04-21 definiendo scraper-first fallback para precontractual; al tener bootstrap + polling + node-cron corriendo en paralelo, si alguno falla silenciosamente no nos enteramos
 
-#### Sistema de alertas push de errores críticos del sistema
-- **Tercera pata** del trío de observabilidad junto con "Centro de monitoreo" y "Métricas operativas del worker". Las dos primeras son PULL (el usuario entra a verlas); esta es PUSH (la alerta llega al usuario sin que tenga que entrar)
-- **Por qué**: si el worker se cae a las 3am, las cuentas SECOP expiran, o CapSolver se queda sin créditos, hoy no me entero hasta que abro LiciTrack o un usuario reclama. Casos reales: 2026-04-22 worker bloqueado 3 días sin enterarnos; 2026-04-26 dos cuentas SECOP fallando login varias horas; CapSolver con error 1001 acumulando fallos
-- **Qué alerta** (solo crítico al inicio):
-  - Worker sin heartbeat > 30 min
-  - Login falla repetidamente en TODAS las cuentas (no solo una)
-  - Base de datos no responde
+#### Sistema de alertas push de errores críticos — ✅ BACKEND IMPLEMENTADO, falta UI
+- **Estado**: el motor de alertas y el envío a Telegram ya están funcionando en producción. Falta solo la timeline visual en `/admin/monitoreo`
+- **Lo que ya existe**:
+  - [worker/src/alerts.ts](../worker/src/alerts.ts): 6 reglas con cooldown 1h + auto-resolución (`login_failures`, `excessive_logins`, `stale_processes`, `no_cycles`, `stuck_notifications`)
+  - [app/api/cron/worker-health-check/route.ts](../app/api/cron/worker-health-check/route.ts): regla `worker_dead` corre fuera del worker (GitHub Actions cada 5min — commit `38f9752`)
+  - Tabla `system_alerts` + sender Telegram en [worker/src/telegram/](../worker/src/telegram/) + `telegram_config.group_chat_id`
+  - Mensajes diferenciados 🚨 firing vs ✅ resolved
+- **Lo que falta (UI)**:
+  - Timeline de alertas en `/admin/monitoreo` con filtros por tipo/severidad y estado activas/resueltas (consume `system_alerts`)
+  - Posible badge en header con conteo de alertas firing
+- **Reglas adicionales propuestas (no implementadas aún)**:
   - CapSolver < 100 créditos OR tasa fallo > 30% en última hora
   - Cualquier ciclo > 25 min (toca el timeout duro)
-  - Procesos precontractuales sin actualizar > 24h cuando deberían cada 5h
-- **Qué NO alerta**: errores individuales aislados (1 captcha que falla), cosas que la lógica recupera sola (sesión expirada que se re-loguea)
-- **Decisiones tomadas**:
-  - Canal: Telegram (reúsa el bot del sistema de notificaciones de procesos)
-  - Granularidad: agregada cada 15 min (no instantánea — evita ruido si SECOP cae 1h)
-  - Destinatarios: solo jefe
-- **Consideraciones técnicas**:
-  - Tabla `system_alerts` (id, type, severity, message, fired_at, resolved_at, sent_at)
-  - Cron cada 15 min lee `worker_heartbeats` + `secop_monitor_log` + `system_health_log` y dispara alertas
-  - No re-disparar la misma regla hasta que se resuelva (evita spam)
-  - En `/admin/monitoreo` mostrar timeline de alertas + estado activas/resueltas
-- **Prerequisito**: tener Telegram funcionando (otra idea ya en backlog)
-- **Relación con el trío**: las 3 ideas (monitoreo + métricas + alertas) deberían construirse juntas en el mismo sprint — comparten infraestructura y cada una sin las otras pierde la mitad de su valor
+- Esta era la tercera pata del trío de observabilidad — el backend está listo, solo queda el visor
 
-#### Consola de administrador (`/admin`)
-- Hard delete global (reset completo con confirmación "CONFIRMAR")
-- Hard delete individual desde cada vista de detalle (solo jefe)
-- Registro en `activity_log` de cada borrado
-- Proteger ruta con rol `jefe`
+#### Consola de administrador (`/admin`) — 🟡 PARCIAL
+- **Estado**: existe `/admin` con reset global (`AdminResetClient`) y gestión de usuarios (`AdminUsersClient`). Falta hard delete individual + auditoría
+- **Lo que falta**:
+  - Hard delete individual desde cada vista de detalle (solo jefe)
+  - Registro en `activity_log` de cada borrado (verificar que el reset global ya lo haga)
+- **Lo que ya está**: reset global con confirmación, ruta protegida con rol `jefe`
 
 #### Lista de contratos filtrable (`/contracts`)
 - Tabla con: nombre, entidad, tipo, status, fecha fin, días restantes
@@ -137,21 +135,6 @@ Funcionalidades que no existen todavía.
 - Notificaciones cuando una tarea está próxima a vencer
 - Requiere nueva tabla: `contract_tasks` (contract_id, assigned_to, description, due_date, status, created_by)
 
-#### Integración con API SECOP 2
-- Conectar LiciTrack con la API pública de Colombia Compra Eficiente (SECOP 2) para consumir datos de contratación estatal
-- **Oportunidades**: buscar y filtrar procesos de contratación abiertos relevantes al perfil del equipo
-- **Seguimiento**: cruzar contratos existentes en LiciTrack con sus registros en SECOP 2 (estado, documentos publicados, adendas)
-- Por qué: el equipo hoy entra manualmente a SECOP; centralizar la consulta ahorra tiempo y evita que se pierdan oportunidades o actualizaciones
-- Consideraciones técnicas: API pública en `https://www.datos.gov.co/resource/...` (SODA API); autenticación con app token; definir qué entidades/estados monitorear; posible webhook o polling periódico para detectar cambios
-
-#### Parser precontractual (procesos/licitaciones abiertas)
-- El worker actual solo sabe extraer datos de contratos **ya adjudicados** (las 9 pestañas: info, condiciones, bienes, docs, pagos, modificaciones, etc.)
-- Falta parser para la vista **precontractual** (licitación abierta, aún no adjudicada) — estructura HTML distinta, con cronograma de deadlines (cierre de presentación, adendas, observaciones)
-- **Lo más crítico**: cronograma con fechas clave que hoy se pueden pasar por alto porque el tracker no los ve
-- Permitir al usuario pegar link directo a un proceso no adjudicado para empezar a trackear desde etapas tempranas
-- Consideraciones técnicas: detectar tipo de URL (contractDetail vs processNotice) para elegir parser correcto; `secop_processes` ya tiene el campo `source` pero falta lógica para estado "precontractual" vs "contractual"
-- Nomenclatura propuesta: pre-adjudicación = "Proceso" / post-adjudicación = "Contrato" (validar con usuario)
-
 #### Integración calendario SECOP ↔ ítems a comprar
 - Cruzar deadlines de contratos SECOP con `items.due_date` del módulo de compras para alertas combinadas
 - Alertas cruzadas: "Faltan 3 días para deadline del Contrato X — tienes 2 ítems sin proveedor asignado"
@@ -175,7 +158,10 @@ Funcionalidades que no existen todavía.
 - Bulk insert con resumen final
 - Requiere migración: agregar `contact_name` y `address` a tabla `suppliers`
 
-#### Centro de Notificaciones In-App (`/notificaciones`)
+#### Centro de Notificaciones In-App (`/notificaciones`) — 🟡 PARCIAL
+- **Estado**: tabla `notifications` ya existe con trigger que auto-crea filas desde `secop_process_changes`. Worker manda a Telegram. Falta la página agregadora dentro de la app
+- **Lo que falta**: página `/app/(app)/notificaciones` con layout de dos cajitas (Procesos SECOP / Ítems y Proveedores) + feed cronológico; campana en header con badge
+- **Lo que ya está**: tabla, trigger, envío a Telegram, NotificationPanel componente puntual
 - Dashboard unificado que centraliza alertas de las dos funciones principales de LiciTrack
 - **Layout**: dos cajitas de resumen arriba (una por categoría, cada una con su color) + feed cronológico grande abajo
 - **Categoría A — Procesos SECOP** (color propio): deadlines de cronograma ("en 2 días vence plazo para observar"), cambios de estado (adjudicación → adjudicado → finalizado), cualquier modificación detectada
@@ -186,28 +172,39 @@ Funcionalidades que no existen todavía.
 - Requiere: tabla `notifications` (o extender la existente si se crea en Fase 1); integración con worker SECOP y lógica de trackeo de ítems
 - Relacionado con: "Header fijo + sistema de notificaciones" y "Fase 1 SECOP" — este dashboard es la implementación concreta del centro de notificaciones
 
-#### Fase 1: Dashboard de Seguimiento + Centro de Notificaciones (`/secop/seguimiento`)
-- KPIs arriba: contratos monitoreados, alertas urgentes, cambios hoy, próximo deadline
-- Feed de cambios en tiempo real (timeline): "Hace 2h: Contrato 03-2024 cambió a Terminado"
-- Contratos en riesgo: los que tienen deadline < 7 días
-- Estado del worker: último ciclo, próximo, errores (de `secop_monitor_log`)
-- Campana de notificaciones en header con badge de pendientes
-- Categorías: roja (crítico: incumplimiento, vencido), amarilla (atención: deadline <48h, nuevo doc), verde (info: pago, actualización)
-- Marcar como leída/no leída
-- Requiere: datos ya están en DB (`secop_monitor_log`, `secop_process_changes`, `secop_processes`); nueva tabla `notifications`
-
-#### Fase 2: Calendario de Deadlines (`/secop/calendario`)
+#### Fase 2: Calendario de Deadlines (`/secop/calendario`) — 🟡 PARCIAL
+- **Estado**: existe `/app/(app)/secop/calendario` funcional con eventos básicos. Rediseño pendiente (ver #16 en mejoras)
+- **Lo que falta**: rediseño 1 marcador/contrato/día, filtros por tipo, alertas escalonadas (7d/3d/1d), sincronización con Google Calendar
 - Vista mensual/semanal con fechas de vencimiento, liquidación, entrega, renovación
 - Color por urgencia: rojo (vencido/hoy), amarillo (<7 días), verde (OK)
-- Alertas escalonadas: aviso a 7 días, 3 días, 1 día y día del deadline
-- Click en evento → detalle del contrato
-- Futuro: sincronización con Google Calendar
 
 #### Fase 3: WhatsApp Integration
 - Conectar con Twilio WhatsApp API o Meta Cloud API al grupo de trabajo
 - Alertas automáticas: cambio de estado, deadline 48h/24h/vencido, nuevo documento, incumplimiento, nuevo pago
 - Formato estructurado: "CONTRATO 03-2024 | Estado cambió a Liquidación | Valor: $52.7M"
 - Resumen diario automático al grupo: "Hoy: 3 cambios, 2 deadlines esta semana"
+
+#### Scraper de bandeja de entrada de SECOP para detectar adendas automáticamente
+- **Qué hace**: el worker scrapea periódicamente la bandeja de mensajes de SECOP por cada cuenta (AITSHA, JAVIER, B&D), parsea los mensajes y detecta cuando SECOP avisa de una adenda. Cuando matchea contra un proceso monitoreado, surface en la UI un banner con sugerencia de relink automático del URL viejo al nuevo notice_uid
+- **Por qué**: SECOP a veces crea un `notice_uid` completamente nuevo cuando hay adenda (caso confirmado 2026-05-18: LOGISTICA CAMPESANA, viejo `CO1.NTC.10243307` → nuevo `CO1.NTC.10276768`). El URL viejo sigue funcionando sin banner de "este proceso fue modificado" — no hay forma de enterarse desde la página del proceso. El usuario sí recibe un mensaje en su bandeja avisando de la adenda; esa es la señal más confiable
+- **Estado actual**: ya existe el botón de relink manual en el panel de detalle (commit `3ad3562`). Cubre el caso cuando el usuario descubre la adenda por su cuenta. Falta automatizar la detección
+- **Qué requiere**:
+  - Login con cada cuenta — reusa la infra existente del worker
+  - Scrapear el HTML de la bandeja (URL específica de SECOP, parsing del listado)
+  - Tabla nueva `secop_inbox_messages` para tracking de mensajes leídos/procesados
+  - Mapear mensaje → proceso (por `referencia_proceso`, notice_uid viejo, o matching por entidad+objeto)
+  - UI: banner/notificación en `/secop/seguimiento` cuando se detecta adenda + sugerir relink automático del URL
+- **Por qué es caro** (estimado ~300-500 LOC + tabla + UI + monitoreo):
+  - Frágil a cambios de UI de SECOP — peor modo de falla: silencioso (dejás de enterarte de adendas sin saber que el scraper rompió). Necesita healthcheck dedicado
+  - Suma tiempo al ciclo del worker (cada login extra ~30-60s por cuenta)
+  - Más estado para mantener (idempotencia, dedup de mensajes)
+- **Antes de implementar — evaluar carga**:
+  - **Supabase**: cuántos mensajes por cuenta por día (probablemente <10), tamaño promedio del HTML, frecuencia de polling de la bandeja. Estimar storage y read/write ops antes de comprometerse
+  - **Vercel**: ninguno por ahora (todo trabajo del worker). Si se agrega UI con polling para mostrar nuevas adendas detectadas, medir requests/min al API
+  - **Worker**: cuánto suma al tiempo de ciclo (hoy ~10min). Validar que el tope `MONITOR_INTERVAL_MS` siga teniendo margen
+- **Prerequisito útil**: primero arreglar el bug de captura de `referencia_proceso` (hoy llega null para muchos procesos como LOGISTICA CAMPESANA). Con referencia llena, una query periódica a la API SECOP también puede detectar adendas en algunos casos sin tocar la bandeja — solución más barata para el subconjunto de procesos donde la referencia existe
+- **Prioridad**: alta para automatización completa, pero **después de**: (1) validar que el relink manual cubre la mayoría de casos en 2-4 semanas de uso real, (2) arreglar el bug de `referencia_proceso` null, (3) medir el volumen real de adendas que recibís para dimensionar la carga
+- Origen: sesión 2026-05-18 mientras debuggeábamos LOGISTICA CAMPESANA con cronograma desactualizado tras adenda de SENA
 
 ### Media prioridad
 
@@ -255,11 +252,10 @@ Funcionalidades que no existen todavía.
 - **Pre-flight Fase 2**: ver checklist completo en [docs/feature-audit-2026-05.md](feature-audit-2026-05.md#plan-de-fase-2--borrado-real-1-2-meses-sesión-futura)
 - **Prioridad**: Baja — esperar el período de gracia. Si pasa una de las "señales de arrepentimiento" en docs/feature-audit-2026-05.md, reactivar en lugar de borrar
 
-#### Fase 4: Radar de Procesos (`/secop/radar`)
+#### Fase 4: Radar de Procesos (`/secop/radar`) — 🟡 PARCIAL
+- **Estado**: existe la ruta `/secop/radar` con estructura base, pero **escondida del sidebar** tras la auditoría de 2026-05-10 (ver `docs/feature-audit-2026-05.md`). Espera el rediseño/decisión de borrado
+- **Lo que falta si se mantiene**: agrupar por entidad y estado, semáforos verde/amarillo/rojo, filtros por entidad/estado/prioridad/fecha
 - Vista visual de todos los procesos monitoreados
-- Agrupados por entidad y estado
-- Semáforo verde/amarillo/rojo según actividad reciente y deadlines
-- Filtros por entidad, estado, prioridad, fecha
 
 #### Fase 5: Resumen Semanal + Email
 - PDF automático con todos los cambios de la semana
@@ -295,6 +291,20 @@ Funcionalidades que no existen todavía.
 
 ## Ya implementado (referencia)
 
+### Core SECOP (worker + tracker)
+| Feature | Evidencia |
+|---------|-----------|
+| **Parser precontractual** (procesos no adjudicados con cronograma) | [worker/src/precontractual/](../worker/src/precontractual/) — fetcher, scraper, monitor, diff, types |
+| **Integración API SECOP 2 (datos.gov.co)** | [worker/src/precontractual/fetcher.ts](../worker/src/precontractual/fetcher.ts) · [lib/secop/dataset.ts](../lib/secop/dataset.ts) — Socrata dataset `p6dx-8zbt` |
+| **Dashboard de Seguimiento SECOP** (`/secop/seguimiento`) — KPIs, feed de cambios, contratos en riesgo, estado worker | [app/(app)/secop/seguimiento/page.tsx](../app/(app)/secop/seguimiento/page.tsx) |
+| **Sistema de alertas push** (backend): 6 reglas con cooldown + Telegram sender | [worker/src/alerts.ts](../worker/src/alerts.ts) · [app/api/cron/worker-health-check/route.ts](../app/api/cron/worker-health-check/route.ts) · GitHub Actions cada 5 min |
+| **Parser contractual** (9 pestañas: info, condiciones, bienes, docs, pagos, modificaciones, etc.) | [worker/src/parsers/contract-detail.ts](../worker/src/parsers/contract-detail.ts) · [worker/src/monitor.ts](../worker/src/monitor.ts) |
+| **Discovery + monitoring loop** | [worker/src/index.ts](../worker/src/index.ts) — polling 3min, node-cron 5x/día |
+| **Diff engine** (snapshots + detección de cambios) | `secop_process_snapshots` + `secop_process_changes` + triggers |
+| **Trigger auto-notificaciones** desde cambios SECOP | tabla `notifications` + trigger en `secop_process_changes` |
+| **Integración Telegram** (bot + grupo de trabajo) | [worker/src/telegram/](../worker/src/telegram/) · [app/(app)/settings/telegram/](../app/(app)/settings/telegram/) |
+
+### Módulo de compras (legacy operativo, varios escondidos post-auditoría 2026-05-10)
 | Feature | Versión |
 |---------|---------|
 | Auto-completar formulario de factura desde PDF/XML | v1.1.0 |
@@ -305,3 +315,6 @@ Funcionalidades que no existen todavía.
 | Módulo de entidades contratantes | v1.0.1 |
 | Módulo de proveedores | v1.0.0 |
 | Supervisión, alertas y dashboard | v1.0.0 |
+
+### Auditoría features
+- 2026-05-10: 9 features escondidas del sidebar (Dashboard, Apuntes, Contratos legacy, Nuevo Contrato, Envíos, Facturas, Mis Empresas, Proveedores, Entidades) + Radar. Decisión de borrado real en 1-2 meses si nadie reclama. Ver [docs/feature-audit-2026-05.md](feature-audit-2026-05.md)
