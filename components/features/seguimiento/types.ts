@@ -33,6 +33,14 @@ export type Process = {
     created_at: string
     author_id: string
   } | null
+  unread_changes_count?: number
+  recent_changes?: {
+    id: string
+    change_type: string
+    summary: string
+    priority: 'low' | 'medium' | 'high'
+    detected_at: string
+  }[]
 }
 
 export type ProcessNote = {

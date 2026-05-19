@@ -1,4 +1,5 @@
 import { requireAuth } from '@/lib/admin'
+import { fetchUnreadChanges } from '@/lib/secop/unread-changes'
 
 /**
  * GET /api/secop/seguimiento
@@ -8,7 +9,7 @@ import { requireAuth } from '@/lib/admin'
 export async function GET(request: Request) {
   const auth = await requireAuth()
   if ('error' in auth) return auth.error
-  const { supabase } = auth
+  const { supabase, userId } = auth
 
   const { searchParams } = new URL(request.url)
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 200)
@@ -62,10 +63,17 @@ export async function GET(request: Request) {
     }
   }
 
-  const enriched = (data || []).map(p => ({
-    ...p,
-    latest_note: latestNoteByProcess[p.id] || null,
-  }))
+  const unreadByProcess = await fetchUnreadChanges(supabase, userId, processIds)
+
+  const enriched = (data || []).map(p => {
+    const unread = unreadByProcess.get(p.id)
+    return {
+      ...p,
+      latest_note: latestNoteByProcess[p.id] || null,
+      unread_changes_count: unread?.unread_changes_count ?? 0,
+      recent_changes: unread?.recent_changes ?? [],
+    }
+  })
 
   return Response.json({ data: enriched, count })
 }

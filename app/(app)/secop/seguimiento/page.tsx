@@ -1,5 +1,6 @@
 import { getAuthUser } from '@/lib/supabase/server'
 import SecopSeguimientoClient from '@/components/features/SecopSeguimientoClient'
+import { fetchUnreadChanges } from '@/lib/secop/unread-changes'
 
 export const dynamic = 'force-dynamic'
 
@@ -72,10 +73,18 @@ export default async function SecopSeguimientoPage() {
       }
     }
   }
-  const enrichedProcesses = (processes || []).map(p => ({
-    ...p,
-    latest_note: latestNoteByProcess[p.id] || null,
-  }))
+  // Unread changes por proceso para el usuario actual
+  const unreadByProcess = await fetchUnreadChanges(supabase, userId, processIds)
+
+  const enrichedProcesses = (processes || []).map(p => {
+    const unread = unreadByProcess.get(p.id)
+    return {
+      ...p,
+      latest_note: latestNoteByProcess[p.id] || null,
+      unread_changes_count: unread?.unread_changes_count ?? 0,
+      recent_changes: unread?.recent_changes ?? [],
+    }
+  })
 
   return (
     <SecopSeguimientoClient

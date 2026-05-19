@@ -65,6 +65,7 @@ export default function SecopSeguimientoClient({
   const [showAccounts, setShowAccounts] = useState(false)
   const [showAddProcess, setShowAddProcess] = useState(false)
   const [selected, setSelected] = useState<Process | null>(null)
+  const [unreadPopoverFor, setUnreadPopoverFor] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' } | null>(null)
 
   const showToast = (message: string, type: 'error' | 'success' = 'error') => {
@@ -199,6 +200,17 @@ export default function SecopSeguimientoClient({
     setSelected(s => s && s.id === id ? { ...s, ...updated } : s)
     showToast('URL reemplazado. El worker re-scrapeará en el próximo ciclo.', 'success')
     return true
+  }
+
+  const markChangesSeen = async (id: string) => {
+    const prev = processes
+    setProcesses(ps => ps.map(p => p.id === id ? { ...p, unread_changes_count: 0 } : p))
+    setSelected(s => s && s.id === id ? { ...s, unread_changes_count: 0 } : s)
+    const res = await fetch(`/api/secop/processes/${id}/mark-seen`, { method: 'POST' })
+    if (!res.ok) {
+      setProcesses(prev)
+      showToast('Error al marcar como visto')
+    }
   }
 
   const updatePhase = async (id: string, phase: Phase | null) => {
@@ -460,6 +472,9 @@ export default function SecopSeguimientoClient({
             onSelect={setSelected}
             onToggleMonitoring={toggleMonitoring}
             onDelete={isJefe ? deleteProcess : undefined}
+            unreadPopoverFor={unreadPopoverFor}
+            onTogglePopover={(id) => setUnreadPopoverFor(prev => prev === id ? null : id)}
+            onMarkSeen={markChangesSeen}
           />
           {totalPages > 1 && (
             <div className="flex items-center justify-between mt-4">
@@ -543,11 +558,14 @@ function WorkerStatusCard({ status }: { status: WorkerStatus }) {
   )
 }
 
-function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
+function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete, unreadPopoverFor, onTogglePopover, onMarkSeen }: {
   processes: Process[]
   onSelect: (p: Process) => void
   onToggleMonitoring: (id: string, enabled: boolean) => void
   onDelete?: (id: string) => void
+  unreadPopoverFor: string | null
+  onTogglePopover: (id: string) => void
+  onMarkSeen: (id: string) => void
 }) {
   return (
     <div className="bg-white rounded-xl border border-[#EAEAEA] overflow-hidden" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
@@ -570,10 +588,23 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
               <tr key={p.id} onClick={() => onSelect(p)}
                 className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${!p.monitoring_enabled ? 'opacity-50' : ''}`}>
                 <td className="px-4 py-3 max-w-[300px]">
-                  <p className="font-medium text-gray-900 truncate">{p.custom_name || p.entidad}</p>
-                  <p className="text-xs text-gray-500 truncate mt-0.5">
-                    {p.custom_name ? p.entidad : p.objeto}
-                  </p>
+                  <div className="flex items-start gap-2">
+                    {(p.unread_changes_count ?? 0) > 0 && (
+                      <UnreadBell
+                        count={p.unread_changes_count ?? 0}
+                        recentChanges={p.recent_changes || []}
+                        isOpen={unreadPopoverFor === p.id}
+                        onToggle={() => onTogglePopover(p.id)}
+                        onMarkSeen={() => onMarkSeen(p.id)}
+                      />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-gray-900 truncate">{p.custom_name || p.entidad}</p>
+                      <p className="text-xs text-gray-500 truncate mt-0.5">
+                        {p.custom_name ? p.entidad : p.objeto}
+                      </p>
+                    </div>
+                  </div>
                   <div className="flex items-center gap-2 mt-1">
                     <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset ${meta.pill}`}>
                       {meta.label}
@@ -639,6 +670,64 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+type RecentChange = NonNullable<Process['recent_changes']>[number]
+
+function UnreadBell({ count, recentChanges, isOpen, onToggle, onMarkSeen }: {
+  count: number
+  recentChanges: RecentChange[]
+  isOpen: boolean
+  onToggle: () => void
+  onMarkSeen: () => void
+}) {
+  return (
+    <div className="relative shrink-0 mt-0.5" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={onToggle}
+        className="relative p-1 rounded-md hover:bg-gray-100 text-gray-700 transition-colors"
+        title={`${count} cambio${count === 1 ? '' : 's'} sin ver`}
+      >
+        <Bell size={14} />
+        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 inline-flex items-center justify-center bg-red-500 text-white text-[9px] font-bold rounded-full leading-none">
+          {count > 9 ? '9+' : count}
+        </span>
+      </button>
+      {isOpen && (
+        <div className="absolute left-0 top-full mt-1 z-30 w-80 bg-white border border-[#EAEAEA] rounded-lg shadow-lg overflow-hidden"
+          style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
+          <div className="px-3 py-2 border-b border-[#EAEAEA] bg-gray-50/60">
+            <p className="text-xs font-semibold text-gray-900">{count} cambio{count === 1 ? '' : 's'} sin ver</p>
+            <p className="text-[10px] text-gray-500 mt-0.5">Mostrando los más recientes</p>
+          </div>
+          <div className="max-h-80 overflow-y-auto divide-y divide-[#EAEAEA]">
+            {recentChanges.length === 0 ? (
+              <p className="text-xs text-gray-400 px-3 py-3">Sin cambios recientes</p>
+            ) : recentChanges.map(ch => {
+              const dotColor = ch.priority === 'high' ? 'bg-red-500' : ch.priority === 'medium' ? 'bg-amber-500' : 'bg-gray-400'
+              return (
+                <div key={ch.id} className="px-3 py-2 flex items-start gap-2">
+                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${dotColor}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-gray-800 break-words">{ch.summary}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">{timeAgo(ch.detected_at)}</p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <div className="border-t border-[#EAEAEA] bg-gray-50/40 px-3 py-2 flex justify-end">
+            <button
+              onClick={onMarkSeen}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-md hover:bg-indigo-50"
+            >
+              Marcar como visto
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
