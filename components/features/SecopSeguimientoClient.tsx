@@ -414,24 +414,33 @@ export default function SecopSeguimientoClient({
         <div className="flex items-center flex-wrap gap-2 mb-4">
           <span className="text-xs font-medium text-gray-500 mr-1">Etapa:</span>
           {([
-            { key: 'all',         label: 'Todas',            count: processes.length },
-            { key: 'pre',         label: 'Precontractual',   count: phaseCounts.pre },
-            { key: 'contractual', label: 'En ejecución',     count: phaseCounts.contractual },
-            { key: 'post',        label: 'Post-contractual', count: phaseCounts.post },
-          ] as const).map(c => (
-            <button
-              key={c.key}
-              onClick={() => setPhaseFilter(c.key)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ring-1 ring-inset transition-colors ${
-                phaseFilter === c.key
-                  ? 'bg-gray-900 text-white ring-gray-900'
-                  : 'bg-white text-gray-600 ring-gray-200 hover:ring-gray-300'
-              }`}
-            >
-              {c.label}
-              <span className={`text-[10px] ${phaseFilter === c.key ? 'text-gray-300' : 'text-gray-400'}`}>{c.count}</span>
-            </button>
-          ))}
+            { key: 'all',         label: 'Todas',            count: processes.length,        phasePill: null as string | null },
+            { key: 'pre',         label: 'Precontractual',   count: phaseCounts.pre,         phasePill: PHASE_META.pre.pill },
+            { key: 'contractual', label: 'En ejecución',     count: phaseCounts.contractual, phasePill: PHASE_META.contractual.pill },
+            { key: 'post',        label: 'Post-contractual', count: phaseCounts.post,        phasePill: PHASE_META.post.pill },
+          ] as const).map(c => {
+            const isActive = phaseFilter === c.key
+            // Color base: si tiene phasePill, lo lleva siempre. "Todas" es gris cuando inactivo, negro cuando activo.
+            const baseCls = c.phasePill
+              ? c.phasePill
+              : isActive
+                ? 'bg-gray-900 text-white ring-gray-900'
+                : 'bg-white text-gray-600 ring-gray-200 hover:ring-gray-300'
+            // Indicador de "seleccionado" cuando tiene color asignado: ring más marcado
+            const activeRing = c.phasePill && isActive
+              ? 'ring-2 ring-current/60'
+              : ''
+            return (
+              <button
+                key={c.key}
+                onClick={() => setPhaseFilter(c.key)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ring-1 ring-inset transition-colors ${baseCls} ${activeRing}`}
+              >
+                {c.label}
+                <span className="text-[10px] opacity-70">{c.count}</span>
+              </button>
+            )
+          })}
         </div>
       )}
 
@@ -549,7 +558,7 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
               <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Proceso</th>
               <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hidden lg:table-cell">Cuenta</th>
               <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Proximo deadline</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hidden md:table-cell">Estado</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hidden md:table-cell">Nota</th>
               <th className="text-right px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hidden md:table-cell">Valor</th>
               <th className="text-center px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 w-20">Track</th>
             </tr>
@@ -559,8 +568,8 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
               const meta = PHASE_META[derivePhase(p)]
               return (
               <tr key={p.id} onClick={() => onSelect(p)}
-                className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${!p.monitoring_enabled ? 'opacity-50' : ''} ${meta.rowTint}`}>
-                <td className={`px-4 py-3 max-w-[300px] ${meta.border ? `border-l-2 ${meta.border}` : ''}`}>
+                className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${!p.monitoring_enabled ? 'opacity-50' : ''}`}>
+                <td className="px-4 py-3 max-w-[300px]">
                   <p className="font-medium text-gray-900 truncate">{p.custom_name || p.entidad}</p>
                   <p className="text-xs text-gray-500 truncate mt-0.5">
                     {p.custom_name ? p.entidad : p.objeto}
@@ -571,21 +580,12 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
                     </span>
                     <SourceBadge source={p.source} />
                     {p.api_pending && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-600/20">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-gray-50 text-gray-500 ring-gray-300/60">
                         <Loader2 size={10} className="animate-spin" /> Enriqueciendo
                       </span>
                     )}
                     {p.referencia_proceso && <span className="text-[10px] text-gray-400">{p.referencia_proceso}</span>}
                   </div>
-                  {p.latest_note && (
-                    <div className="flex items-start gap-1.5 mt-2 px-2 py-1.5 rounded-md bg-amber-50 ring-1 ring-inset ring-amber-200/70 text-xs text-amber-900">
-                      <MessageSquare size={12} className="mt-0.5 shrink-0 text-amber-600" />
-                      <div className="flex-1 min-w-0">
-                        <span className="font-medium whitespace-pre-wrap break-words">{p.latest_note.content}</span>
-                        <span className="text-amber-700/70 font-normal ml-1">· {timeAgo(p.latest_note.created_at)}</span>
-                      </div>
-                    </div>
-                  )}
                 </td>
                 <td className="px-4 py-3 hidden lg:table-cell">
                   <span className="text-xs text-gray-500">{p.secop_accounts?.name || '—'}</span>
@@ -593,10 +593,26 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
                 <td className="px-4 py-3">
                   <DeadlineBadge deadline={p.next_deadline} label={p.next_deadline_label} />
                 </td>
-                <td className="px-4 py-3 hidden md:table-cell">
-                  <span className="text-xs text-gray-600">{p.estado_resumen || p.fase || '—'}</span>
+                <td className="px-4 py-3 hidden md:table-cell max-w-[280px]">
+                  {p.latest_note ? (() => {
+                    const ageMs = Date.now() - new Date(p.latest_note.created_at).getTime()
+                    const isStale = ageMs >= 2 * 24 * 60 * 60 * 1000
+                    return (
+                      <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-md bg-amber-50 ring-1 ring-inset ring-amber-200/70 text-xs text-amber-900">
+                        <MessageSquare size={12} className="mt-0.5 shrink-0 text-amber-600" />
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium whitespace-pre-wrap break-words">{p.latest_note.content}</span>
+                          <span className={`ml-1 ${isStale ? 'text-red-600 font-semibold' : 'text-amber-700/70'}`}>
+                            · {timeAgo(p.latest_note.created_at)}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  })() : (
+                    <span className="text-xs text-gray-400">—</span>
+                  )}
                 </td>
-                <td className="px-4 py-3 text-right hidden md:table-cell whitespace-nowrap">
+                <td className="px-4 py-3 text-right hidden md:table-cell whitespace-nowrap text-sm font-medium text-gray-900">
                   {formatCurrency(p.valor_estimado)}
                 </td>
                 <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
@@ -628,15 +644,11 @@ function ProcessTable({ processes, onSelect, onToggleMonitoring, onDelete }: {
 }
 
 function SourceBadge({ source }: { source: string }) {
-  const map: Record<string, { label: string; classes: string }> = {
-    radar: { label: 'Radar', classes: 'bg-blue-50 text-blue-700 ring-blue-700/10' },
-    account: { label: 'Cuenta', classes: 'bg-green-50 text-green-700 ring-green-600/20' },
-    manual: { label: 'Manual', classes: 'bg-gray-100 text-gray-600 ring-gray-500/10' },
-  }
-  const badge = map[source] || map.manual
+  const labels: Record<string, string> = { radar: 'Radar', account: 'Cuenta', manual: 'Manual' }
+  const label = labels[source] || labels.manual
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset ${badge.classes}`}>
-      {badge.label}
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset bg-gray-100 text-gray-600 ring-gray-500/20">
+      {label}
     </span>
   )
 }
