@@ -156,25 +156,49 @@ async function syncAccountInbox(account: AccountRow): Promise<{ scraped: number;
       }
     }
 
-    // Para mensajes NUEVOS sin Ref visible: abrir el detalle para extraer Ref.
-    // SECOP los va a marcar como "Leído" — aceptable porque son nuevos.
-    // Los "Leídas" ya existentes NO se abren (evitamos tocar mensajes viejos).
-    const newRowsWithoutRef = rows.filter(r => r.estado === 'Nuevo' && !r.ref_proceso && r.detalle_url)
-    if (newRowsWithoutRef.length > 0) {
-      console.log(`[Inbox] ${account.name}: abriendo ${newRowsWithoutRef.length} mensaje(s) nuevo(s) para extraer Ref`)
-      for (const row of newRowsWithoutRef) {
-        try {
-          const detalleUrl = row.detalle_url!.startsWith('http')
-            ? row.detalle_url!
-            : new URL(row.detalle_url!, SECOP.baseUrl).toString()
-          await page.goto(detalleUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          const detailHtml = await page.content()
-          const detail = parseInboxDetail(detailHtml)
-          if (detail.ref_proceso) row.ref_proceso = detail.ref_proceso
-          // Pequeño delay para no spamear SECOP
-          await new Promise(r => setTimeout(r, 1500))
-        } catch (err) {
-          warnings.push(`No pude abrir detalle de "${row.asunto.slice(0, 40)}": ${err instanceof Error ? err.message : err}`)
+    // Política de apertura de mensajes:
+    //
+    // - PRIMER ciclo de la cuenta (last_inbox_sync_at = NULL): se registran
+    //   todos los mensajes existentes SIN abrir ninguno. Quedan como "el
+    //   pasado" — los que no traen Ref en el subject van a huérfanos.
+    //
+    // - Ciclos siguientes: solo se abren mensajes con `estado='Nuevo'`, sin
+    //   Ref en el subject, y con `fecha > last_inbox_sync_at`. Esos son los
+    //   que llegaron DESPUÉS de que arrancamos el scraper.
+    //
+    // Esto evita disparar "Leído por LiciTrack" en mensajes históricos que
+    // el equipo nunca abrió manualmente.
+    const isFirstSync = !account.last_inbox_sync_at
+    const sinceMs = account.last_inbox_sync_at
+      ? new Date(account.last_inbox_sync_at).getTime()
+      : null
+
+    if (isFirstSync) {
+      console.log(`[Inbox] ${account.name}: primer sync — registrando ${rows.length} mensaje(s) histórico(s) SIN abrir ninguno`)
+    } else {
+      const newRowsWithoutRef = rows.filter(r => {
+        if (r.estado !== 'Nuevo' || r.ref_proceso || !r.detalle_url) return false
+        if (!r.fecha_iso) return false
+        const fechaMs = new Date(r.fecha_iso).getTime()
+        return sinceMs !== null && fechaMs > sinceMs
+      })
+
+      if (newRowsWithoutRef.length > 0) {
+        console.log(`[Inbox] ${account.name}: abriendo ${newRowsWithoutRef.length} mensaje(s) nuevo(s) posteriores a ${account.last_inbox_sync_at} para extraer Ref`)
+        for (const row of newRowsWithoutRef) {
+          try {
+            const detalleUrl = row.detalle_url!.startsWith('http')
+              ? row.detalle_url!
+              : new URL(row.detalle_url!, SECOP.baseUrl).toString()
+            await page.goto(detalleUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+            const detailHtml = await page.content()
+            const detail = parseInboxDetail(detailHtml)
+            if (detail.ref_proceso) row.ref_proceso = detail.ref_proceso
+            // Pequeño delay para no spamear SECOP
+            await new Promise(r => setTimeout(r, 1500))
+          } catch (err) {
+            warnings.push(`No pude abrir detalle de "${row.asunto.slice(0, 40)}": ${err instanceof Error ? err.message : err}`)
+          }
         }
       }
     }
