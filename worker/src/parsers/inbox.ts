@@ -3,12 +3,13 @@
  *
  * URL: https://www.secop.gov.co/CO1Marketplace/Messages/MessageManagement/Index
  *
- * Estrategia: detectar la tabla por keywords en los headers (Desde, Tipo,
- * Asunto, Fecha, Estado) en vez de hardcodear selectores. Esto es resiliente
- * a IDs auto-generados y a pequeños cambios de SECOP.
+ * El listado es una tabla con class="VortalGrid" e id que contiene
+ * "grdResultList". Las celdas se identifican por sufijos estables en sus IDs
+ * (_tdFromCol, _tdMessageTypeCol, _tdSubjectCol, _tdHasAttachmentsCol,
+ * _tdMessageDateCol, _tdMessageStateColumn, _tdMessageDetailCol).
  *
- * Si la detección falla retorna [] y el caller debe volcar el HTML a disco
- * para inspeccionar.
+ * Los IDs reales son larguísimos (200+ chars con todo el path del control),
+ * por eso usamos selectors con [id*="..."] que matchean cualquier sufijo.
  */
 import * as cheerio from 'cheerio'
 import type { AnyNode } from 'domhandler'
@@ -17,25 +18,28 @@ export type InboxMessageRow = {
   desde: string | null
   tipo: string
   asunto: string
-  fecha_raw: string            // texto crudo "19/05/2026 11:47 AM"
-  fecha_iso: string | null     // parseado a ISO
-  estado: string
+  fecha_raw: string            // "21/05/2026 12:08 PM"
+  fecha_iso: string | null     // ISO con offset Bogotá UTC-05
+  estado: string               // 'Nuevo' | 'Leídas' | 'Enviado' | ...
   has_attachments: boolean
   detalle_url: string | null
-  // El Ref puede estar en la fila como atributo, en el detalle, o derivable del asunto
-  ref_proceso: string | null
+  message_uid: string | null   // id numérico interno de SECOP
+  ref_proceso: string | null   // intento de extraer del asunto
 }
 
-const HEADER_HINTS = ['desde', 'tipo', 'asunto', 'fecha', 'estado'] as const
-type HeaderKey = typeof HEADER_HINTS[number]
+export type InboxDetailInfo = {
+  ref_proceso: string | null
+  message_uid: string | null
+}
 
-function norm(s: string | null | undefined): string {
-  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim()
+export type ParseInboxResult = {
+  rows: InboxMessageRow[]
+  warnings: string[]
 }
 
 /**
  * Parsea "DD/MM/YYYY HH:MM AM/PM" → ISO UTC, asumiendo Bogotá (UTC-05:00).
- * SECOP siempre publica las horas en hora Bogotá sin offset.
+ * SECOP siempre publica las horas en hora Bogotá.
  */
 function parseSecopDateTime(s: string | null): string | null {
   if (!s) return null
@@ -52,182 +56,114 @@ function parseSecopDateTime(s: string | null): string | null {
 }
 
 /**
- * Detecta el orden de columnas leyendo los `<th>` del header. Devuelve un map
- * { desde: 0, tipo: 1, ... } o null si la tabla no es la de mensajes.
+ * El href del link "Detalle" es javascript:void(0); el URL real vive en el
+ * onclick: window.location.href = '...ProcedureMessageDisplay/Index' + '?' + 'id=' + '153833537' + ...
+ * Devuelve { messageId, detalleUrl } o nulls si no parsea.
  */
-function detectColumns($: cheerio.CheerioAPI, $table: cheerio.Cheerio<AnyNode>): Record<HeaderKey, number> | null {
-  const $headers = $table.find('thead th, thead td').length > 0
-    ? $table.find('thead th, thead td')
-    : $table.find('tr').first().find('th, td')
-
-  if ($headers.length === 0) return null
-
-  const map: Partial<Record<HeaderKey, number>> = {}
-  $headers.each((idx, el) => {
-    const text = norm($(el).text())
-    for (const hint of HEADER_HINTS) {
-      if (map[hint] === undefined && text.includes(hint)) {
-        map[hint] = idx
-      }
-    }
-  })
-
-  // Al menos asunto + fecha deben estar para considerarla válida
-  if (map.asunto === undefined || map.fecha === undefined) return null
-
-  // Defaults razonables si faltan
+function parseDetalleFromOnclick(onclick: string | undefined): { messageId: string | null; detalleUrl: string | null } {
+  if (!onclick) return { messageId: null, detalleUrl: null }
+  // Patrón: 'id=' + 'NUMERO'
+  const m = onclick.match(/'id='\s*\+\s*'(\d+)'/)
+  if (!m) return { messageId: null, detalleUrl: null }
+  const id = m[1]
   return {
-    desde: map.desde ?? -1,
-    tipo: map.tipo ?? -1,
-    asunto: map.asunto,
-    fecha: map.fecha,
-    estado: map.estado ?? -1,
+    messageId: id,
+    detalleUrl: `https://www.secop.gov.co/CO1BusinessLine/Tendering/ProcedureMessageDisplay/Index?id=${id}&prevCtxUrl=https%3a%2f%2fwww.secop.gov.co%3a443%2fCO1Marketplace%2fMessages%2fMessageManagement%2fIndex&prevCtxLbl=Mensajes`,
   }
 }
 
 /**
- * Encuentra la tabla del listado de mensajes en el DOM. Recorre todas las
- * tablas, identifica la que tiene headers con las keywords esperadas.
+ * Algunos subjects contienen el código de referencia del proceso embebido,
+ * típicamente con formato XXXX-NN-XXX-2026-XXX. Extraemos por regex con
+ * heurísticas conservadoras para no agarrar falsos positivos.
  */
-function findMessageTable($: cheerio.CheerioAPI): { $table: cheerio.Cheerio<AnyNode>; cols: Record<HeaderKey, number> } | null {
-  let result: { $table: cheerio.Cheerio<AnyNode>; cols: Record<HeaderKey, number> } | null = null
-  $('table').each((_, el) => {
-    if (result) return
-    const $t = $(el)
-    const cols = detectColumns($, $t)
-    if (cols) {
-      result = { $table: $t, cols }
-      return false  // break
-    }
-  })
-  return result
-}
-
-function extractCellText($: cheerio.CheerioAPI, $row: cheerio.Cheerio<AnyNode>, index: number): string {
-  if (index < 0) return ''
-  const $cells = $row.find('td')
-  if (index >= $cells.length) return ''
-  const $cell = $cells.eq(index)
-  // Clonar para no modificar el DOM; remover scripts/styles/timezone labels
-  const clone = $cell.clone()
-  clone.find('script, style, font.DateTimeDetail, .DateTimeDetail').remove()
-  return clone.text().replace(/\s+/g, ' ').trim()
-}
-
-function extractAttachments($: cheerio.CheerioAPI, $row: cheerio.Cheerio<AnyNode>): boolean {
-  // Heurística: si alguna celda tiene un img/icon de paperclip, o un link con
-  // "Archivo"/"Adjunto", asumimos que tiene archivos.
-  const html = $row.html() || ''
-  if (/paperclip|attach|adjunto|archivo/i.test(html)) return true
-  // Algunas implementaciones usan font-awesome
-  if (/fa-paperclip|glyphicon-paperclip/.test(html)) return true
-  return false
-}
-
-function extractDetailUrl($: cheerio.CheerioAPI, $row: cheerio.Cheerio<AnyNode>): string | null {
-  // Buscar un link "Detalle" o el primer link de la fila
-  const detalleByText = $row.find('a').filter((_, a) => norm($(a).text()).includes('detalle')).first()
-  if (detalleByText.length > 0) {
-    const href = detalleByText.attr('href')
-    if (href) return href
-  }
-  const firstLink = $row.find('a').first().attr('href')
-  return firstLink || null
-}
-
-/**
- * Intenta extraer "Ref:" del proceso desde la fila. SECOP puede:
- *  - Incluirlo en el asunto como prefijo "[Ref: XXX]"
- *  - Incluirlo en un atributo data-* o en un title/tooltip
- *  - No incluirlo (entonces hay que abrir el detalle, que ya descartamos)
- *
- * Esta función intenta los dos primeros; si no aparece, devuelve null y el
- * caller maneja matching por otros medios (asunto fuzzy, sender + fecha).
- */
-function extractRefProceso($: cheerio.CheerioAPI, $row: cheerio.Cheerio<AnyNode>): string | null {
-  // 1) data-ref / data-process / data-referencia
-  for (const attr of ['data-ref', 'data-process', 'data-referencia', 'data-process-ref']) {
-    const v = $row.attr(attr) || $row.find(`[${attr}]`).first().attr(attr)
-    if (v) return v.trim()
-  }
-  // 2) title o tooltip que mencione "Ref:"
-  const titleText = $row.find('[title*="Ref"]').first().attr('title')
-  if (titleText) {
-    const m = titleText.match(/Ref[:\s]+([A-Za-z0-9._-]+)/i)
+function extractRefFromSubject(subject: string): string | null {
+  if (!subject) return null
+  // Patrones comunes: ICBF-MC-008-..., SASI-AMZ-RA-..., CCENEG-097-01-..., CO1.AWD.X
+  const patterns = [
+    /\b([A-Z]{2,8}-[A-Z0-9]{1,8}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*)\b/,
+    /\b(CO1\.[A-Z]+\.\d+)\b/,
+    /\b(\d{3,5}-20\d{2})\b/,  // ej. 1769-2025
+  ]
+  for (const re of patterns) {
+    const m = subject.match(re)
     if (m) return m[1]
   }
-  // 3) Texto de cualquier celda con "Ref:"
-  const fullText = $row.text()
-  const m = fullText.match(/Ref[:\s]+([A-Za-z0-9._-]+)/i)
-  if (m) return m[1]
   return null
 }
 
-export type ParseInboxResult = {
-  rows: InboxMessageRow[]
-  warnings: string[]
+function cellText($row: cheerio.Cheerio<AnyNode>, idSuffix: string): string {
+  const $td = $row.find(`td[id*="${idSuffix}"]`).first()
+  if ($td.length === 0) return ''
+  // Remover scripts/translator labels para no ensuciar el texto
+  const clone = $td.clone()
+  clone.find('script, style').remove()
+  return clone.text().replace(/\s+/g, ' ').trim()
 }
 
 /**
- * Parsea la página de detalle de un mensaje (cuando lo abrimos para extraer
- * el "Ref:" del proceso). Solo se llama para mensajes nuevos — SECOP los va
- * a marcar como "Leído" tras esto, pero es aceptable porque justo llegaron.
+ * Has attachments: la imagen de paperclip tiene src real cuando hay adjunto,
+ * o style="display:none" cuando no. Detectamos por presencia de src útil.
  */
-export type InboxDetailInfo = {
-  ref_proceso: string | null
-  message_uid: string | null   // CO1.MSG.X si lo encuentra
-}
-
-export function parseInboxDetail(html: string): InboxDetailInfo {
-  const $ = cheerio.load(html)
-  const fullText = $('body').text().replace(/\s+/g, ' ').trim()
-
-  // 1) "Ref:" en cualquier parte del texto
-  let ref_proceso: string | null = null
-  const refMatch = fullText.match(/Ref(?:erencia)?[:\s]+([A-Za-z0-9._\-/]+)/i)
-  if (refMatch) ref_proceso = refMatch[1]
-
-  // 2) CO1.MSG.X
-  let message_uid: string | null = null
-  const msgMatch = fullText.match(/(CO1\.MSG\.\d+)/i)
-  if (msgMatch) message_uid = msgMatch[1].toUpperCase()
-
-  return { ref_proceso, message_uid }
+function hasAttachments($row: cheerio.Cheerio<AnyNode>): boolean {
+  const $img = $row.find('img[id*="_imgHasAttachments"]').first()
+  if ($img.length === 0) return false
+  const style = ($img.attr('style') || '').toLowerCase()
+  if (style.includes('display:none') || style.includes('display: none')) return false
+  const src = $img.attr('src')
+  return !!src
 }
 
 export function parseInboxList(html: string): ParseInboxResult {
   const warnings: string[] = []
   const $ = cheerio.load(html)
 
-  const table = findMessageTable($)
-  if (!table) {
-    warnings.push('No se encontró tabla de mensajes con headers Asunto/Fecha. Posible cambio de SECOP o página de error.')
+  // Identificación específica de la grilla SECOP — NO heurística genérica.
+  // Class="VortalGrid" + id contiene "grdResultList" es único en esta página.
+  let $table = $('table.VortalGrid[id*="grdResultList"]').first()
+  if ($table.length === 0) {
+    $table = $('table[id*="grdResultList_tbl"]').first()
+  }
+  if ($table.length === 0) {
+    warnings.push('No se encontró la grilla de mensajes (table.VortalGrid con id grdResultList). HTML guardado.')
     return { rows: [], warnings }
   }
 
-  const { $table, cols } = table
-  const $rows = $table.find('tbody tr').length > 0
-    ? $table.find('tbody tr')
-    : $table.find('tr').slice(1)  // skip header
+  // Filas de datos: cualquier <tr> que NO sea el header
+  const $dataRows = $table.find('tr').filter((_, el) => {
+    const id = $(el).attr('id') || ''
+    return /_tr\d+$/.test(id)  // _tr0, _tr1, _tr2, ...
+  })
+
+  if ($dataRows.length === 0) {
+    warnings.push('Grilla encontrada pero sin filas (_trN). Posible bandeja vacía o cargando.')
+    return { rows: [], warnings }
+  }
 
   const rows: InboxMessageRow[] = []
 
-  $rows.each((_, el) => {
+  $dataRows.each((_, el) => {
     const $row = $(el)
-    if ($row.find('td').length === 0) return  // skip header-like rows
 
-    const asunto = extractCellText($, $row, cols.asunto)
-    const fecha_raw = extractCellText($, $row, cols.fecha)
-    if (!asunto || !fecha_raw) return  // fila vacía / separador
+    const desde = cellText($row, '_tdFromCol') || null
+    const tipo = cellText($row, '_tdMessageTypeCol') || 'General'
+    const asunto = cellText($row, '_tdSubjectCol')
+    const fecha_raw = cellText($row, '_tdMessageDateCol')
+    const estado = cellText($row, '_tdMessageStateColumn') || 'Nuevo'
 
-    const tipo = extractCellText($, $row, cols.tipo) || 'General'
-    const desde = extractCellText($, $row, cols.desde) || null
-    const estado = extractCellText($, $row, cols.estado) || 'Nuevo'
+    if (!asunto || !fecha_raw) {
+      warnings.push(`Fila incompleta: asunto="${asunto}" fecha="${fecha_raw}"`)
+      return
+    }
+
     const fecha_iso = parseSecopDateTime(fecha_raw)
     if (!fecha_iso) {
       warnings.push(`Fecha no parseable: "${fecha_raw}" (asunto="${asunto.slice(0, 50)}")`)
       return
     }
+
+    const detalleAnchor = $row.find('a[id*="_lnkDetailLink"]').first()
+    const { messageId, detalleUrl } = parseDetalleFromOnclick(detalleAnchor.attr('onclick'))
 
     rows.push({
       desde,
@@ -236,11 +172,35 @@ export function parseInboxList(html: string): ParseInboxResult {
       fecha_raw,
       fecha_iso,
       estado,
-      has_attachments: extractAttachments($, $row),
-      detalle_url: extractDetailUrl($, $row),
-      ref_proceso: extractRefProceso($, $row),
+      has_attachments: hasAttachments($row),
+      detalle_url: detalleUrl,
+      message_uid: messageId,
+      ref_proceso: extractRefFromSubject(asunto),
     })
   })
 
   return { rows, warnings }
+}
+
+/**
+ * Página del detalle de un mensaje (ProcedureMessageDisplay/Index?id=X).
+ * Cuando lo abrimos, SECOP marca el mensaje como "Leído" — solo lo hacemos
+ * para mensajes que YA estaban en estado "Nuevo" y necesitamos su Ref.
+ */
+export function parseInboxDetail(html: string): InboxDetailInfo {
+  const $ = cheerio.load(html)
+  const fullText = $('body').text().replace(/\s+/g, ' ').trim()
+
+  let ref_proceso: string | null = null
+  // En la página de detalle aparece típicamente como "Ref:" o "Referencia del proceso:"
+  const refLabel = fullText.match(/(?:Ref(?:erencia)?\s+(?:del\s+proceso)?)\s*:?\s*([A-Z0-9._\-/]{4,})/i)
+  if (refLabel) ref_proceso = refLabel[1]
+  // Fallback: patrones embebidos
+  if (!ref_proceso) ref_proceso = extractRefFromSubject(fullText.slice(0, 2000))
+
+  let message_uid: string | null = null
+  const msgMatch = fullText.match(/(CO1\.MSG\.\d+)/i)
+  if (msgMatch) message_uid = msgMatch[1].toUpperCase()
+
+  return { ref_proceso, message_uid }
 }

@@ -188,6 +188,7 @@ async function syncAccountInbox(account: AccountRow): Promise<{ scraped: number;
       const insertPayload = {
         account_id: account.id,
         process_id: processId,
+        message_uid: row.message_uid,
         ref_proceso: row.ref_proceso,
         tipo: row.tipo,
         asunto: row.asunto,
