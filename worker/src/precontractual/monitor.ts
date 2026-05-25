@@ -153,9 +153,19 @@ async function monitorOneProcess(
       const reason = !apiFound ? 'scraper-first' : (isBootstrap ? 'bootstrap' : 're-scrape')
       console.log(`[Precontractual] ${proc.notice_uid}: ${reason} (captcha)`)
       const scraped = await scrapeOpportunityDetail(proc.notice_uid!)
-      scrapedCronograma = scraped.cronograma
-      scrapedBasicInfo = scraped.basic_info
-      scrapedAt = scraped.scraped_at
+      // SECOP a veces devuelve la página tras el captcha pero con el contenido
+      // vacío (mantenimiento, timeout interno, render parcial). El scraper no
+      // lanza error — entrega cronograma=[] y entidad=null. Si lo aceptáramos,
+      // buildMinimalSnapshotFromScraper persistiría un snapshot vacío que pisa
+      // el bueno previo y borra el next_deadline. Trátalo como fallo.
+      const isDegraded = scraped.cronograma.length === 0 && !scraped.basic_info.entidad
+      if (isDegraded) {
+        console.warn(`[Precontractual] ${proc.notice_uid}: scrape devolvió página degradada (sin cronograma ni entidad) — preservando snapshot previo`)
+      } else {
+        scrapedCronograma = scraped.cronograma
+        scrapedBasicInfo = scraped.basic_info
+        scrapedAt = scraped.scraped_at
+      }
     } catch (err) {
       console.error(`[Precontractual] ${proc.notice_uid}: scrape falló:`,
         err instanceof Error ? err.message : err)
