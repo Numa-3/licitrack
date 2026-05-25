@@ -122,12 +122,47 @@ async function syncAccountInbox(account: AccountRow): Promise<{ scraped: number;
       return { scraped: 0, inserted: 0, matched: 0, warnings: ['session expired'] }
     }
 
-    // Aplicar filtro de fecha si hay last_sync (sino, traemos lo que SECOP devuelve por default)
+    // SECOP carga la grilla con AJAX después del page load. Esperar el selector
+    // específico (table.VortalGrid con id grdResultList) antes de capturar HTML.
+    const GRID_SELECTOR = 'table.VortalGrid[id*="grdResultList"]'
+    let gridLoaded = false
+    try {
+      await page.waitForSelector(GRID_SELECTOR, { timeout: 10_000 })
+      gridLoaded = true
+    } catch {
+      // El grid no apareció solo — probablemente requiere click en "Buscar"
+    }
+
+    // Aplicar filtro de fecha si hay last_sync. Si no hay last_sync pero el grid
+    // tampoco apareció, igual hay que clickear Buscar para forzar la carga.
+    let filterApplied = false
     if (account.last_inbox_sync_at) {
       const sinceDate = account.last_inbox_sync_at.slice(0, 10)  // YYYY-MM-DD
-      const ok = await applyDateFilter(page, sinceDate)
-      if (!ok) warnings.push(`No pude aplicar filtro desde ${sinceDate}, scrapeando default`)
+      filterApplied = await applyDateFilter(page, sinceDate)
+      if (!filterApplied) warnings.push(`No pude aplicar filtro desde ${sinceDate}`)
     }
+
+    // Si la grilla no se cargó automáticamente Y no aplicamos filtro (que ya
+    // dispara el Buscar), forzar click en btnSearchButton para que SECOP
+    // ejecute la búsqueda con los defaults (últimos 2 meses).
+    if (!gridLoaded && !filterApplied) {
+      try {
+        const $btn = page.locator('input[id*="btnSearchButton"], button[id*="btnSearchButton"]').first()
+        if (await $btn.count() > 0) {
+          await $btn.click()
+          await page.waitForSelector(GRID_SELECTOR, { timeout: 15_000 }).catch(() => {
+            warnings.push('Click Buscar OK pero grilla nunca apareció')
+          })
+        } else {
+          warnings.push('btnSearchButton no encontrado en la página')
+        }
+      } catch (err) {
+        warnings.push(`Click Buscar falló: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+
+    // Esperar a que termine cualquier AJAX residual
+    await page.waitForLoadState('networkidle', { timeout: 8_000 }).catch(() => {})
 
     const html = await page.content()
     const { rows, warnings: parserWarnings } = parseInboxList(html)
