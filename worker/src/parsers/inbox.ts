@@ -76,17 +76,24 @@ function parseDetalleFromOnclick(onclick: string | undefined): { messageId: stri
  * Algunos subjects contienen el código de referencia del proceso embebido,
  * típicamente con formato XXXX-NN-XXX-2026-XXX. Extraemos por regex con
  * heurísticas conservadoras para no agarrar falsos positivos.
+ *
+ * IMPORTANTE: SECOP a veces inserta espacios espurios después de un guión
+ * en el asunto (ej. "ICBF-MC-009- 276705-2026-AMAZ"). Normalizamos antes de
+ * matchear, colapsando `-\s+` → `-`, para que el regex capture el Ref completo.
  */
 function extractRefFromSubject(subject: string): string | null {
   if (!subject) return null
+  // Normalizar espacios después de guiones (bug común del asunto SECOP).
+  const normalized = subject.replace(/-\s+/g, '-')
   // Patrones comunes: ICBF-MC-008-..., SASI-AMZ-RA-..., CCENEG-097-01-..., CO1.AWD.X
   const patterns = [
-    /\b([A-Z]{2,8}-[A-Z0-9]{1,8}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*)\b/,
+    /\b([A-Z]{2,8}-[A-Z0-9]{1,8}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})+)\b/,  // 4+ segmentos (con espacio normalizado)
+    /\b([A-Z]{2,8}-[A-Z0-9]{1,8}-[A-Z0-9]{1,8})\b/,                      // 3 segmentos
     /\b(CO1\.[A-Z]+\.\d+)\b/,
     /\b(\d{3,5}-20\d{2})\b/,  // ej. 1769-2025
   ]
   for (const re of patterns) {
-    const m = subject.match(re)
+    const m = normalized.match(re)
     if (m) return m[1]
   }
   return null

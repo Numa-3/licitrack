@@ -278,6 +278,10 @@ async function monitorOneProcess(
   setIfPresent('nit_adjudicado', snapshot.proveedor_adjudicado?.nit)
   setIfPresent('nombre_adjudicado', snapshot.proveedor_adjudicado?.nombre)
   setIfPresent('valor_adjudicado', snapshot.proveedor_adjudicado?.valor)
+  // award_uid (CO1.AWD.X): viene en cualquiera de las phases — tomamos la primera con valor.
+  // Lo necesita el inbox-monitor para mapear los mensajes "Informe de evaluación/selección"
+  // que SECOP envía referenciando el AWD en vez del Notice UID.
+  setIfPresent('award_uid', snapshot.phases.find(p => p.id_adjudicacion)?.id_adjudicacion)
 
   // Si la API ahora sí encontró el proceso, limpiamos el flag pending
   if (apiFound && proc.api_pending) {

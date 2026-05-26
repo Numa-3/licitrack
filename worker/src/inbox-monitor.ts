@@ -30,6 +30,7 @@ type ProcessLookupRow = {
   id: string
   account_id: string | null
   referencia_proceso: string | null
+  award_uid: string | null
 }
 
 const DEBUG_HTML_DIR = path.resolve(process.cwd(), 'debug-html')
@@ -178,16 +179,23 @@ async function syncAccountInbox(account: AccountRow): Promise<{ scraped: number;
 
     console.log(`[Inbox] ${account.name}: ${rows.length} filas parseadas`)
 
-    // Lookup de procesos monitoreados de esta cuenta por referencia_proceso
+    // Lookup de procesos monitoreados de esta cuenta. Construimos DOS índices:
+    //  - refToProcessId: por referencia_proceso (la del asunto)
+    //  - awardToProcessId: por award_uid (CO1.AWD.X que aparece en informes)
+    // El monitor precontractual pobla `award_uid` con el id_adjudicacion del API.
     const { data: procs } = await admin
       .from('secop_processes')
-      .select('id, account_id, referencia_proceso')
+      .select('id, account_id, referencia_proceso, award_uid')
       .eq('account_id', account.id)
-      .not('referencia_proceso', 'is', null)
+      .or('referencia_proceso.not.is.null,award_uid.not.is.null')
     const refToProcessId = new Map<string, string>()
+    const awardToProcessId = new Map<string, string>()
     for (const p of (procs as ProcessLookupRow[] | null) || []) {
       if (p.referencia_proceso) {
         refToProcessId.set(p.referencia_proceso.trim().toLowerCase(), p.id)
+      }
+      if (p.award_uid) {
+        awardToProcessId.set(p.award_uid.trim().toUpperCase(), p.id)
       }
     }
 
@@ -241,8 +249,18 @@ async function syncAccountInbox(account: AccountRow): Promise<{ scraped: number;
     let inserted = 0
     let matched = 0
     for (const row of rows) {
-      const refKey = row.ref_proceso?.trim().toLowerCase() || null
-      const processId = refKey ? refToProcessId.get(refKey) || null : null
+      const refKey = row.ref_proceso?.trim() || null
+      // El ref puede ser un Award UID (CO1.AWD.X) o una referencia normal del
+      // proceso. Para AWD usamos lookup por award_uid; para el resto, por
+      // referencia_proceso (case-insensitive).
+      let processId: string | null = null
+      if (refKey) {
+        if (/^CO1\.AWD\./i.test(refKey)) {
+          processId = awardToProcessId.get(refKey.toUpperCase()) || null
+        } else {
+          processId = refToProcessId.get(refKey.toLowerCase()) || null
+        }
+      }
 
       const insertPayload = {
         account_id: account.id,
