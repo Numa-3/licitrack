@@ -92,10 +92,24 @@ function extractRefFromSubject(subject: string): string | null {
   return null
 }
 
+/**
+ * SECOP usa una convención asimétrica de IDs:
+ *  - Las TDs de cada fila tienen IDs como `..._grdResultListtd_thFromCol`,
+ *    `..._thSubjectCol`, `..._thMessageDateCol`, `..._thMessageStateColumn`.
+ *    Sí: la TD también lleva prefijo `_th`, no `_td`. Eso engañaba al parser.
+ *  - Los SPANs hijos dentro de algunas columnas SÍ usan `_td{Col}_spn...`
+ *    (ej. `_tdSubjectCol_spnMatchingResultSubject_0`), pero la columna
+ *    "Desde" tiene un SPAN con id `spnFromFriendlyname_N` — sin `_tdFromCol`.
+ *
+ * Estrategia: matchear la TD por `_th{Col}` (que cubre TODAS las columnas) y
+ * extraer su texto. Las TH del header viven en otro `<tr>` que ya fue
+ * filtrado por el regex `/_tr\d+$/`, así que no hay colisión.
+ */
 function cellText($row: cheerio.Cheerio<AnyNode>, idSuffix: string): string {
-  const $td = $row.find(`td[id*="${idSuffix}"]`).first()
+  // idSuffix llega como `_tdFromCol`, `_tdSubjectCol`, etc. — convertimos a `_th{Col}`
+  const thSuffix = idSuffix.replace(/^_td/, '_th')
+  const $td = $row.find(`td[id*="${thSuffix}"]`).first()
   if ($td.length === 0) return ''
-  // Remover scripts/translator labels para no ensuciar el texto
   const clone = $td.clone()
   clone.find('script, style').remove()
   return clone.text().replace(/\s+/g, ' ').trim()
