@@ -1,0 +1,3 @@
+# Salidas transitorias del worker (diagnóstico de scraping / recon) — no commitear
+debug-html/
+recon-output/

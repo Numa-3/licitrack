@@ -10,6 +10,7 @@ import { runPrecontractualMonitorCycle, monitorOneNow } from './precontractual/m
 import { sendPendingNotifications, sendPendingAlerts } from './telegram/sender.js'
 import { pollSetupCommands } from './telegram/poller.js'
 import { runAlertChecks } from './alerts.js'
+import { runRadarDiscovery } from './radar/discovery.js'
 
 /**
  * Main entry point for the SECOP worker.
@@ -404,6 +405,12 @@ function startPollingLoop() {
 const DISCOVERY_MIN_INTERVAL_MS = 55 * 60_000  // 55 min (con margen vs el ciclo de 30 min)
 let lastDiscoveryAt = 0
 
+// Radar de descubrimiento (buscador público SECOP por región). Independiente
+// del discovery de cuentas: corre cada ~1h con su propio timer. Gating a 55 min
+// para que enganche con la cadencia de ciclos de 30 min y dé ~1 corrida/hora.
+const RADAR_MIN_INTERVAL_MS = 55 * 60_000
+let lastRadarAt = 0
+
 async function runFullCycle() {
   // Decidir si este ciclo hace discovery o solo monitoring.
   // Tras un restart del worker, lastDiscoveryAt=0 → primer ciclo SIEMPRE hace
@@ -463,6 +470,23 @@ async function runFullCycle() {
     console.log(`[Worker] Inbox: ${inboxResult.totalNew} mensajes nuevos, ${inboxResult.totalMatched} matched a procesos`)
   } catch (err) {
     console.error('[Worker] Inbox sync failed:', err instanceof Error ? err.message : err)
+  }
+
+  // 6. Radar de descubrimiento — buscador público SECOP por región (near-real-time).
+  //    Gated a ~1h con su propio timer (independiente del discovery de cuentas).
+  const radarNow = Date.now()
+  if (radarNow - lastRadarAt >= RADAR_MIN_INTERVAL_MS) {
+    lastRadarAt = radarNow
+    console.log('\n--- Radar discovery (buscador público) ---')
+    try {
+      const radar = await runRadarDiscovery()
+      console.log(`[Worker] Radar: ${radar.regiones} región(es), ${radar.nuevos} nuevos, ${radar.alertados} alertados`)
+    } catch (err) {
+      console.error('[Worker] Radar discovery failed:', err instanceof Error ? err.message : err)
+    }
+  } else {
+    const skipMin = Math.floor((radarNow - lastRadarAt) / 60_000)
+    console.log(`[Worker] Radar skip (último hace ${skipMin} min)`)
   }
 }
 
