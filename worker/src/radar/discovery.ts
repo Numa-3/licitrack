@@ -6,8 +6,9 @@
  *      + fecha de publicación (últimos LOOKBACK_DAYS días).
  *   2. Aplica los filtros del lado nuestro (exclude/include/cuantía).
  *   3. Deduplica contra secop_radar_seen (solo lo NO alertado aún).
- *   4. Primer run → digest de los más recientes (anti-flood), marca todo como visto.
- *      Runs siguientes → 1 alerta Telegram por proceso nuevo.
+ *   4. Primer run → fija baseline (digest del backlog si hay, o confirmación),
+ *      marca todo como visto, set seeded_at. Runs siguientes → 1 alerta Telegram
+ *      por proceso nuevo.
  *
  * Corre dentro del worker (que ya tiene Playwright + CapSolver + el emisor de
  * Telegram). Se invoca desde index.ts con su propio timer (~1h).
@@ -124,6 +125,33 @@ async function processRegion(
     max_value: cfg.max_value,
   }
   const interesantes = applyFilter(rows, filter).filter((r) => r.notice_uid)
+
+  const markSeen = (rs: RadarSearchRow[]) =>
+    admin.from('secop_radar_seen').upsert(rs.map((r) => toSeenRow(r, cfg.region)), {
+      onConflict: 'notice_uid',
+      ignoreDuplicates: true, // no pisa first_seen ni alerted_at previos
+    })
+  const markAlerted = (notices: string[]) =>
+    admin.from('secop_radar_seen').update({ alerted_at: new Date().toISOString() }).in('notice_uid', notices)
+
+  // ── PRIMER RUN: fijar baseline. El backlog NO se alerta uno por uno —
+  //    se manda un digest (o una confirmación si no hay nada) y se marca visto.
+  if (!cfg.seeded_at) {
+    if (interesantes.length) {
+      await markSeen(interesantes)
+      await markAlerted(interesantes.map((r) => r.notice_uid as string))
+    }
+    if (chatId) {
+      const text = interesantes.length
+        ? formatRadarDigest(cfg.region, interesantes.slice(0, SEED_DIGEST_COUNT), interesantes.length)
+        : `🛰️ <b>Radar ${cfg.region} activado</b> — vigilando. Ahora mismo no hay procesos nuevos que cumplan tus filtros; te aviso apenas salga uno.`
+      await sendTelegram(chatId, text)
+    }
+    await admin.from('secop_radar_config').update({ seeded_at: new Date().toISOString() }).eq('id', cfg.id)
+    return { nuevos: interesantes.length, alertados: interesantes.length ? Math.min(interesantes.length, SEED_DIGEST_COUNT) : 0 }
+  }
+
+  // ── RUNS NORMALES ──
   if (!interesantes.length) return { nuevos: 0, alertados: 0 }
 
   const uids = interesantes.map((r) => r.notice_uid as string)
@@ -140,26 +168,7 @@ async function processRegion(
   const pendientes = interesantes.filter((r) => !alertedSet.has(r.notice_uid as string))
   if (!pendientes.length) return { nuevos: 0, alertados: 0 }
 
-  // Registrar como vistos (sin pisar first_seen ni alerted_at previos).
-  await admin
-    .from('secop_radar_seen')
-    .upsert(pendientes.map((r) => toSeenRow(r, cfg.region)), {
-      onConflict: 'notice_uid',
-      ignoreDuplicates: true,
-    })
-
-  const markAlerted = (notices: string[]) =>
-    admin.from('secop_radar_seen').update({ alerted_at: new Date().toISOString() }).in('notice_uid', notices)
-
-  // ── PRIMER RUN: digest de los más recientes + marcar todo visto (anti-flood) ──
-  if (!cfg.seeded_at) {
-    if (chatId) {
-      await sendTelegram(chatId, formatRadarDigest(cfg.region, pendientes.slice(0, SEED_DIGEST_COUNT), pendientes.length))
-    }
-    await markAlerted(uids) // todo lo de este run queda "ya avisado"
-    await admin.from('secop_radar_config').update({ seeded_at: new Date().toISOString() }).eq('id', cfg.id)
-    return { nuevos: pendientes.length, alertados: Math.min(pendientes.length, SEED_DIGEST_COUNT) }
-  }
+  await markSeen(pendientes)
 
   if (!chatId) return { nuevos: pendientes.length, alertados: 0 }
 
